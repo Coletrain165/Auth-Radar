@@ -137,61 +137,13 @@ except ImportError:
     AZURE_AVAILABLE = False
     print("Azure Document Intelligence not available. Using local OCR.")
 
-# Azure configuration - DISABLED (using local OCR only)
-# To re-enable Azure, uncomment and add your credentials below
-AZURE_ENDPOINT = ""  # "https://authnumbers.cognitiveservices.azure.com/"
-AZURE_KEY = ""  # Disabled - using local OCR + ML extraction only
-AZURE_MODEL_ID = "Pace_Auth_Model_V2"
-
-# Caspio API configuration
-CASPIO_ACCOUNT_ID = "c2dct561"
-CASPIO_CLIENT_ID = "889f2f1e429f4585af25c7b40166b3155c59d419e965fba427"
-CASPIO_CLIENT_SECRET = "e916ce48df3742ed88ca0258ad321316e80804b90bf08988a1"
-CASPIO_TABLE_NAME = "a_Authorizations"
-
-# Fields to extract
-FIELDS = ["Patient Name", "Auth #", "Date Approved", "Date Auth Expire", "Patient ID", "Service_Type_Identifier"]
-
-def get_app_dir():
-    """Get the application directory - works for both script and frozen exe."""
-    if getattr(sys, 'frozen', False):
-        # Running as compiled exe - use exe's directory
-        return pathlib.Path(sys.executable).parent
-    else:
-        # Running as script
-        return pathlib.Path(__file__).parent
-
-# Application directory (for config files, etc.)
-APP_DIR = get_app_dir()
-
-# Poppler path for pdf2image (Windows)
-# Check multiple possible locations for flexibility
-# We need to find the folder containing pdfinfo.exe or pdftoppm.exe (the actual binaries)
-_poppler_locations = [
-    APP_DIR / "poppler" / "poppler-24.08.0" / "Library" / "bin",  # Development/source
-    APP_DIR / "poppler" / "Library" / "bin",  # Alternative structure
-    APP_DIR / "poppler",  # EXE distribution (bin files directly in poppler folder)
-]
-POPPLER_PATH = None
-for _loc in _poppler_locations:
-    # Check if it's a valid poppler bin directory (contains pdftoppm.exe or pdfinfo.exe)
-    if _loc.exists() and (_loc / "pdftoppm.exe").exists():
-        POPPLER_PATH = _loc
-        break
-if POPPLER_PATH is None:
-    # Fallback to first option that exists
-    for _loc in _poppler_locations:
-        if _loc.exists():
-            POPPLER_PATH = _loc
-            break
-if POPPLER_PATH is None:
-    POPPLER_PATH = _poppler_locations[0]  # Default to first option
-
-# Patient names database file
-PATIENT_NAMES_FILE = APP_DIR / "data" / "patient_names.json"
-
-# Password for encrypted PDFs
-PDF_PASSWORD = "92020"
+# --- Centralized configuration (credentials, paths, field list) ---
+# Loaded from config.py which reads .env for secrets
+from config import (
+    AZURE_ENDPOINT, AZURE_KEY, AZURE_MODEL_ID,
+    CASPIO_ACCOUNT_ID, CASPIO_CLIENT_ID, CASPIO_CLIENT_SECRET, CASPIO_TABLE_NAME,
+    FIELDS, APP_DIR, POPPLER_PATH, PATIENT_NAMES_FILE, PDF_PASSWORD,
+)
 
 
 class PatientNameMatcher:
@@ -2441,6 +2393,86 @@ class PDFExtractor:
                 progress_callback(i + 1, total, pdf_file.name)
         
         return self.results
+
+    def process_all_files(self, folder_path, progress_callback=None):
+        """Process all supported files in a folder (PDF, CSV, XLSX, PNG, JPG).
+
+        PDFs use the existing process_pdf pipeline.
+        Other file types are routed through extraction.router which picks
+        the best extraction method (structured parse, OCR, etc.).
+        Results from the router are converted into the same dict format
+        that process_pdf returns so format_results() works unchanged.
+        """
+        from extraction.router import classify_file, route_file
+        from extraction.structured_extractor import extract_csv_rows
+        from extraction.excel_extractor import extract_xlsx_rows
+        from config import SUPPORTED_EXTENSIONS
+
+        folder = pathlib.Path(folder_path)
+
+        # Collect all supported files (recursive glob for subfolder support)
+        all_files = []
+        for ext in SUPPORTED_EXTENSIONS:
+            all_files.extend(folder.rglob(f"*{ext}"))
+        all_files = sorted(set(all_files))
+
+        self.results = []
+        total = len(all_files)
+
+        for i, file_path in enumerate(all_files):
+            file_type = classify_file(str(file_path))
+
+            try:
+                if file_type == "pdf":
+                    # Use existing battle-tested PDF pipeline
+                    result = self.process_pdf(file_path)
+                    self.results.append(result)
+                elif file_type in ("csv", "xlsx"):
+                    # Structured files can contain multiple rows
+                    if file_type == "csv":
+                        rows = extract_csv_rows(str(file_path))
+                    else:
+                        rows = extract_xlsx_rows(str(file_path))
+                    for er in rows:
+                        self.results.append(self._extraction_result_to_dict(er))
+                else:
+                    # Images and anything else -> router
+                    er = route_file(str(file_path))
+                    self.results.append(self._extraction_result_to_dict(er))
+            except Exception as e:
+                self.results.append({
+                    "file": file_path.name,
+                    "error": str(e),
+                    "extracted_at": datetime.now().isoformat(),
+                })
+
+            if progress_callback:
+                progress_callback(i + 1, total, file_path.name)
+
+        return self.results
+
+    @staticmethod
+    def _extraction_result_to_dict(er):
+        """Convert an ExtractionResult into the dict format process_pdf returns."""
+        result = {
+            "file": pathlib.Path(er.source_file).name if er.source_file else "",
+            "extracted_at": datetime.now().isoformat(),
+            "extraction_method": er.extraction_method,
+        }
+        for field in FIELDS:
+            result[field] = er.fields.get(field)
+        if er.error:
+            result["error"] = er.error
+        if er.raw_text:
+            result["raw_text_preview"] = er.raw_text[:800]
+        if er.confidence:
+            for field, conf in er.confidence.items():
+                result[f"{field}_confidence"] = conf
+        if er.warnings:
+            for w in er.warnings:
+                if "_method" not in w:
+                    result.setdefault("warnings", []).append(w)
+        return result
     
     def get_auth_type_from_filename(self, filename):
         """
@@ -2545,7 +2577,16 @@ class PDFExtractor:
             auth_type = self.get_auth_type_from_filename(filename)
             service_type_identifier = "Escort" if auth_type == "Escort" else ""
             
-            # Create ONE row per PDF
+            # Build warning summary from per-field fallback methods
+            warnings = []
+            for f in FIELDS:
+                meth = result.get(f"{f}_method", "")
+                if meth and "fallback" in meth:
+                    warnings.append(f"{f}: {meth}")
+            if result.get("warnings"):
+                warnings.extend(result["warnings"])
+
+            # Create ONE row per file
             formatted_rows.append({
                 "Last Name": last_name,
                 "First Name": first_name,
@@ -2564,6 +2605,9 @@ class PDFExtractor:
                 "Clearing House Payer ID": "98481",
                 "Location ID": "CAENC",
                 "Unique Payer Identifier": "Innermark : WayStar (98481)",
+                "Extraction Method": result.get("extraction_method", ""),
+                "Source File": filename,
+                "Warnings": "; ".join(warnings) if warnings else "",
             })
         
         # Store match stats for later access
@@ -2738,7 +2782,7 @@ class SplashScreen:
         top = tk.Frame(inner, bg=self.bg)
         top.pack(expand=True, fill=tk.BOTH, padx=50, pady=(44, 8))
 
-        logo_path = APP_DIR / "auth_radar_logo.png"
+        logo_path = APP_DIR / "Auth Radar Logo.png"
         self._logo_img = None
         if logo_path.exists():
             try:
@@ -2841,7 +2885,7 @@ class LandingPage:
         
         # Auth Radar branding — logo only
         self._landing_logo = None
-        logo_path = APP_DIR / "auth_radar_logo.png"
+        logo_path = APP_DIR / "Auth Radar Logo.png"
         if logo_path.exists():
             try:
                 from PIL import Image, ImageTk
@@ -2992,6 +3036,17 @@ class AuthExtractorApp:
         self.current_results_df = None  # DataFrame of formatted results
         self.results_columns = []  # Column names for results table
         self.editing_cell = None  # Track cell being edited (item, column)
+
+        # Dropbox integration
+        self.dropbox_service = None  # DropboxService instance
+        self.dropbox_files = []     # List of FileMetadata from last listing
+        self.dropbox_folder_var = tk.StringVar(value="")  # Selected Dropbox folder path
+        self.dropbox_keyword_var = tk.StringVar(value="")  # filename keyword filter
+        self.dropbox_name_filter_var = tk.StringVar(value="")  # patient name in filename
+        self.dropbox_name_filter_list = []  # list of patient names
+        self.dropbox_status_var = tk.StringVar(value="(not connected)")
+        self.dropbox_name_count_var = tk.StringVar(value="(none)")
+        self.finder_source_type = tk.StringVar(value="local")  # "local" or "dropbox"
         
         self.setup_ui()
         self.check_ocr_status()
@@ -3057,7 +3112,7 @@ class AuthExtractorApp:
         
         # Load logo if available
         self._header_logo = None
-        logo_path = APP_DIR / "auth_radar_logo.png"
+        logo_path = APP_DIR / "Auth Radar Logo.png"
         if logo_path.exists():
             try:
                 from PIL import Image, ImageTk
@@ -3103,12 +3158,12 @@ class AuthExtractorApp:
         
         # Sub-Tab 1: File Finder
         self.finder_tab = ttk.Frame(self.auth_notebook)
-        self.auth_notebook.add(self.finder_tab, text="   File Finder   ")
+        self.auth_notebook.add(self.finder_tab, text="  1. Find Auth PDFs  ")
         self.setup_finder_tab()
         
         # Sub-Tab 2: Extract PDFs
         self.extractor_tab = ttk.Frame(self.auth_notebook)
-        self.auth_notebook.add(self.extractor_tab, text="   Extract PDFs   ")
+        self.auth_notebook.add(self.extractor_tab, text="  2. Download PDFs  ")
         self.setup_extractor_tab()
         
         # Sub-Tab 3: Review & Edit
@@ -3313,7 +3368,7 @@ class AuthExtractorApp:
         
         # Description
         desc_label = ttk.Label(main_frame, 
-            text="Extract Patient Name, Auth #, Dates, and Patient ID from authorization PDFs (supports OCR)",
+            text="Download and unlock authorization PDFs so you can review them or upload to ChatGPT for extraction.",
             style='Desc.TLabel')
         desc_label.pack(anchor=tk.W, pady=(0, 15))
         
@@ -3356,9 +3411,9 @@ class AuthExtractorApp:
         
         browse_btn = ttk.Button(self.manual_folder_frame, text="📁 Browse Folder...", command=self.browse_input)
         browse_btn.pack(side=tk.RIGHT)
-        
+
         # Output file selection
-        output_frame = ttk.LabelFrame(main_frame, text="Step 2: Choose Output Excel File", padding="10")
+        output_frame = ttk.LabelFrame(main_frame, text="Step 2: Choose Output Folder", padding="10")
         output_frame.pack(fill=tk.X, pady=5)
         
         output_entry = ttk.Entry(output_frame, textvariable=self.output_file, width=60)
@@ -3366,8 +3421,33 @@ class AuthExtractorApp:
         
         save_btn = ttk.Button(output_frame, text="Save As...", command=self.browse_output)
         save_btn.pack(side=tk.RIGHT)
+
+        # Status bar — pack at bottom first so it's always visible
+        status_bar = ttk.Label(main_frame, textvariable=self.status_text,
+                               relief=tk.SUNKEN, anchor=tk.W)
+        status_bar.pack(fill=tk.X, pady=(4, 0), side=tk.BOTTOM)
+
+        # Buttons — pack at bottom before progress so they're always visible
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(fill=tk.X, pady=(6, 2), side=tk.BOTTOM)
+
+        self.extract_btn = ttk.Button(button_frame, text="� Download & Unlock PDFs",
+                                      command=self.start_extraction, style='Action.TButton')
+        self.extract_btn.pack(side=tk.LEFT, padx=5)
+
+        self.test_btn = ttk.Button(button_frame, text="🔍 Test Single PDF",
+                                   command=self.test_single_pdf)
+        self.test_btn.pack(side=tk.LEFT, padx=5)
+
+        self.sync_btn = ttk.Button(button_frame, text="🔄 Sync Patient Names",
+                                   command=self.sync_patient_names_from_caspio)
+        self.sync_btn.pack(side=tk.LEFT, padx=5)
+
+        self.goto_review_btn = ttk.Button(button_frame, text="📋 Go to Review Tab",
+                                          command=lambda: self.auth_notebook.select(self.review_tab))
+        self.goto_review_btn.pack(side=tk.LEFT, padx=5)
         
-        # Progress section
+        # Progress section — expands to fill remaining space between steps and buttons
         progress_frame = ttk.LabelFrame(main_frame, text="Progress & Log", padding="10")
         progress_frame.pack(fill=tk.BOTH, expand=True, pady=5)
         
@@ -3388,31 +3468,6 @@ class AuthExtractorApp:
         
         self.log_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        
-        # Buttons
-        button_frame = ttk.Frame(main_frame)
-        button_frame.pack(fill=tk.X, pady=10)
-        
-        self.extract_btn = ttk.Button(button_frame, text="🚀 Extract & Export", 
-                                      command=self.start_extraction, style='Action.TButton')
-        self.extract_btn.pack(side=tk.LEFT, padx=5)
-        
-        self.test_btn = ttk.Button(button_frame, text="🔍 Test Single PDF", 
-                                   command=self.test_single_pdf)
-        self.test_btn.pack(side=tk.LEFT, padx=5)
-        
-        self.sync_btn = ttk.Button(button_frame, text="🔄 Sync Patient Names", 
-                                   command=self.sync_patient_names_from_caspio)
-        self.sync_btn.pack(side=tk.LEFT, padx=5)
-        
-        self.goto_review_btn = ttk.Button(button_frame, text="📋 Go to Review Tab", 
-                                          command=lambda: self.auth_notebook.select(self.review_tab))
-        self.goto_review_btn.pack(side=tk.LEFT, padx=5)
-        
-        # Status bar
-        status_bar = ttk.Label(main_frame, textvariable=self.status_text, 
-                              relief=tk.SUNKEN, anchor=tk.W)
-        status_bar.pack(fill=tk.X, pady=(10, 0))
     
     def on_results_double_click(self, event):
         """Handle double-click to edit a cell in results table."""
@@ -3470,8 +3525,11 @@ class AuthExtractorApp:
         item, col_idx, col_name = self.editing_cell
         new_value = self.edit_entry.get()
         
-        # Update treeview
+        # Get old value for audit trail
         current_values = list(self.results_tree.item(item, "values"))
+        old_value = current_values[col_idx] if col_idx < len(current_values) else ""
+        
+        # Update treeview
         current_values[col_idx] = new_value
         self.results_tree.item(item, values=current_values)
         
@@ -3484,6 +3542,26 @@ class AuthExtractorApp:
                     self.current_results_df.at[row_idx, col_name] = new_value
             except Exception:
                 pass
+        
+        # Audit log the edit (non-blocking)
+        if str(old_value) != str(new_value):
+            try:
+                # Try to get source file from the row for context
+                source_file = ""
+                src_idx = None
+                if "Source File" in self.results_columns:
+                    src_idx = self.results_columns.index("Source File")
+                if src_idx is not None and src_idx < len(current_values):
+                    source_file = current_values[src_idx]
+                
+                from audit.logger import AuditLogger
+                AuditLogger().log_review(
+                    source_file=source_file or "unknown",
+                    reviewer="user",
+                    edits={col_name: {"old": str(old_value), "new": str(new_value)}},
+                )
+            except Exception:
+                pass  # audit failure should not block editing
         
         # Cleanup
         self.edit_entry.destroy()
@@ -3531,7 +3609,10 @@ class AuthExtractorApp:
                 "CPT Code 5": "CPT Code 5",
                 "Clearing House Payer ID": "Clearing House Payer ID",
                 "Location ID": "Location ID",
-                "Unique Payer Identifier": "Unique Payer Identifier"
+                "Unique Payer Identifier": "Unique Payer Identifier",
+                "Extraction Method": "Extraction Method",
+                "Source File": "Source File",
+                "Warnings": "Warnings",
             }
             
             # Parse date columns for comparison
@@ -3559,7 +3640,7 @@ class AuthExtractorApp:
                     else:
                         values.append("")
                 
-                # Determine if this row is expired (Last DOS > Date Auth Expired)
+                # Determine row tag: expired takes priority, then method-based, then warnings
                 is_expired = False
                 if date_expired_col is not None and last_dos_col is not None:
                     expire_val = date_expired_col.iloc[idx] if idx < len(date_expired_col) else None
@@ -3568,7 +3649,26 @@ class AuthExtractorApp:
                         is_expired = True
                         expired_count += 1
                 
-                tag = "expired" if is_expired else "normal"
+                if is_expired:
+                    tag = "expired"
+                else:
+                    # Color by extraction method
+                    ext_method = ""
+                    if "Extraction Method" in df.columns:
+                        ext_method = str(row.get("Extraction Method", "")).lower()
+                    has_warnings = ""
+                    if "Warnings" in df.columns:
+                        has_warnings = str(row.get("Warnings", ""))
+                    
+                    if ext_method in ("csv_parse", "excel_parse"):
+                        tag = "structured"
+                    elif "ocr" in ext_method:
+                        tag = "ocr"
+                    elif has_warnings:
+                        tag = "warning"
+                    else:
+                        tag = "normal"
+                
                 self.results_tree.insert("", tk.END, values=values, tags=(tag,))
                 successful_count += 1
         else:
@@ -3659,7 +3759,8 @@ class AuthExtractorApp:
             "Last Name", "First Name", "Patient Name", "Patient ID", "Service_Type_Identifier",
             "Auth Number", "Date Approved", "Date Auth Expired", "Last DOS",
             "CPT Code", "CPT Code 2", "CPT Code 3", "CPT Code 4", "CPT Code 5",
-            "Clearing House Payer ID", "Location ID", "Unique Payer Identifier"
+            "Clearing House Payer ID", "Location ID", "Unique Payer Identifier",
+            "Extraction Method", "Source File", "Warnings"
         ]
         
         self.results_tree = ttk.Treeview(tree_container, columns=self.results_columns, show="headings", height=10)
@@ -3669,15 +3770,19 @@ class AuthExtractorApp:
             "Last Name": 110, "First Name": 90, "Patient Name": 140, "Patient ID": 70, "Service_Type_Identifier": 85,
             "Auth Number": 90, "Date Approved": 95, "Date Auth Expired": 105, "Last DOS": 85,
             "CPT Code": 70, "CPT Code 2": 75, "CPT Code 3": 75, "CPT Code 4": 75, "CPT Code 5": 75,
-            "Clearing House Payer ID": 130, "Location ID": 80, "Unique Payer Identifier": 130
+            "Clearing House Payer ID": 130, "Location ID": 80, "Unique Payer Identifier": 130,
+            "Extraction Method": 95, "Source File": 150, "Warnings": 180,
         }
         for col in self.results_columns:
             self.results_tree.heading(col, text=col)
             self.results_tree.column(col, width=col_widths.get(col, 80), anchor=tk.W)
         
-        # Configure tag for expired (red) rows - dark theme
+        # Configure tags for row highlighting - dark theme
         self.results_tree.tag_configure("expired", background="#3B1219", foreground="#FCA5A5")
         self.results_tree.tag_configure("normal", background="#1E293B")
+        self.results_tree.tag_configure("ocr", background="#2D2B1E", foreground="#FDE68A")  # amber tint
+        self.results_tree.tag_configure("structured", background="#1E2D3B", foreground="#93C5FD")  # blue tint
+        self.results_tree.tag_configure("warning", background="#3B2F1E", foreground="#FBBF24")  # warning amber
         
         # Scrollbars
         tree_scroll_y = ttk.Scrollbar(tree_container, orient=tk.VERTICAL, command=self.results_tree.yview)
@@ -3740,6 +3845,14 @@ class AuthExtractorApp:
         
         tk.Label(button_frame, text="  ", bg="#5c2828", width=2).pack(side=tk.LEFT, padx=(5, 2))
         ttk.Label(button_frame, text="= Expired", 
+                  font=("Segoe UI", 8)).pack(side=tk.LEFT)
+
+        tk.Label(button_frame, text="  ", bg="#2D2B1E", width=2).pack(side=tk.LEFT, padx=(8, 2))
+        ttk.Label(button_frame, text="= OCR", 
+                  font=("Segoe UI", 8)).pack(side=tk.LEFT)
+
+        tk.Label(button_frame, text="  ", bg="#1E2D3B", width=2).pack(side=tk.LEFT, padx=(8, 2))
+        ttk.Label(button_frame, text="= Structured", 
                   font=("Segoe UI", 8)).pack(side=tk.LEFT)
 
     def show_errors_popup(self):
@@ -4135,15 +4248,56 @@ class AuthExtractorApp:
         folders_frame = ttk.Frame(top_row)
         folders_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         
-        # Source folder selection
-        source_frame = ttk.LabelFrame(folders_frame, text="Source Folder", padding="8")
-        source_frame.pack(fill=tk.X, pady=(0, 5), padx=(0, 15))
-        
-        source_entry = ttk.Entry(source_frame, textvariable=self.finder_source, width=55)
+        # Source type selection — Local Folder or Dropbox
+        src_type_row = ttk.Frame(folders_frame)
+        src_type_row.pack(fill=tk.X, pady=(0, 6), padx=(0, 15))
+        ttk.Label(src_type_row, text="Source:", font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Radiobutton(src_type_row, text="📁 Local Folder", variable=self.finder_source_type,
+                        value="local", command=self._toggle_finder_source).pack(side=tk.LEFT, padx=(0, 20))
+        ttk.Radiobutton(src_type_row, text="☁️ Dropbox Folder", variable=self.finder_source_type,
+                        value="dropbox", command=self._toggle_finder_source).pack(side=tk.LEFT)
+
+        # Container that switches between local source frame and Dropbox source frame
+        self._finder_source_container = ttk.Frame(folders_frame)
+        self._finder_source_container.pack(fill=tk.X, pady=(0, 5), padx=(0, 15))
+
+        # Local source folder (shown by default)
+        self.finder_local_source_frame = ttk.LabelFrame(self._finder_source_container, text="Source Folder", padding="8")
+        self.finder_local_source_frame.pack(fill=tk.X)
+
+        source_entry = ttk.Entry(self.finder_local_source_frame, textvariable=self.finder_source, width=55)
         source_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
-        
-        source_btn = ttk.Button(source_frame, text="📁 Browse", command=self.browse_finder_source)
+
+        source_btn = ttk.Button(self.finder_local_source_frame, text="📁 Browse", command=self.browse_finder_source)
         source_btn.pack(side=tk.RIGHT)
+
+        # Dropbox source (hidden until Dropbox radio selected)
+        self.finder_dropbox_source_frame = ttk.LabelFrame(self._finder_source_container, text="☁️ Dropbox Source", padding="8")
+        # Not packed yet — shown by _toggle_finder_source
+
+        # Row 1: Connect + status + folder dropdown
+        _dbx_r1 = ttk.Frame(self.finder_dropbox_source_frame)
+        _dbx_r1.pack(fill=tk.X, pady=(0, 4))
+        self.dropbox_connect_btn = ttk.Button(_dbx_r1, text="🔗 Connect", command=self._connect_dropbox)
+        self.dropbox_connect_btn.pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Label(_dbx_r1, textvariable=self.dropbox_status_var,
+                  font=("Segoe UI", 9, "italic"), foreground="gray").pack(side=tk.LEFT, padx=(0, 12))
+        ttk.Label(_dbx_r1, text="Folder:").pack(side=tk.LEFT, padx=(4, 2))
+        self.dropbox_folder_combo = ttk.Combobox(_dbx_r1, textvariable=self.dropbox_folder_var,
+                                                  width=30, state="normal")
+        self.dropbox_folder_combo.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 4))
+        ttk.Button(_dbx_r1, text="🔄", width=3,
+                   command=self._refresh_dropbox_folders).pack(side=tk.LEFT)
+
+        # Row 2: Type/keyword filter
+        _dbx_r3 = ttk.Frame(self.finder_dropbox_source_frame)
+        _dbx_r3.pack(fill=tk.X)
+        ttk.Label(_dbx_r3, text="Type filter:").pack(side=tk.LEFT, padx=(0, 6))
+        for _kw in ("Skilled", "Unskilled", "Escort"):
+            ttk.Radiobutton(_dbx_r3, text=_kw, variable=self.dropbox_keyword_var,
+                            value=_kw).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Radiobutton(_dbx_r3, text="All", variable=self.dropbox_keyword_var,
+                        value="").pack(side=tk.LEFT)
         
         # Destination folder selection
         dest_frame = ttk.LabelFrame(folders_frame, text="Destination Folder", padding="8")
@@ -4361,6 +4515,237 @@ class AuthExtractorApp:
         
         # Show criteria view by default
         self.search_criteria_frame.pack(fill=tk.BOTH, expand=True)
+
+    def _toggle_finder_source(self):
+        """Toggle between local folder and Dropbox source in File Finder."""
+        if self.finder_source_type.get() == "dropbox":
+            self.finder_local_source_frame.pack_forget()
+            self.finder_dropbox_source_frame.pack(fill=tk.X)
+        else:
+            self.finder_dropbox_source_frame.pack_forget()
+            self.finder_local_source_frame.pack(fill=tk.X)
+
+    def _auto_unlock_pdf(self, pdf_path):
+        """Automatically decrypt a PDF in place if it's encrypted. Non-fatal on failure."""
+        if not pdf_path.lower().endswith(".pdf"):
+            return
+        try:
+            from services.pdf_unlock_service import PdfUnlockService
+            unlock = PdfUnlockService()
+            unlocked_path, was_encrypted = unlock.unlock(pdf_path)
+            if was_encrypted:
+                import shutil as _shutil
+                _shutil.move(unlocked_path, pdf_path)
+                self.finder_log_msg(f"      🔓 Decrypted: {os.path.basename(pdf_path)}")
+        except Exception:
+            pass  # Non-fatal — keep the file as-is
+
+    def _run_finder_from_dropbox(self):
+        """Run the File Finder using Dropbox as the source, downloading matches to destination."""
+        if not self.dropbox_service or not self.dropbox_service.is_connected:
+            messagebox.showerror("Error", "Connect to Dropbox first using the 🔗 Connect button.")
+            return
+
+        dest = self.finder_dest.get()
+        if not dest:
+            messagebox.showerror("Error", "Please select a destination folder.")
+            return
+
+        criteria = []
+        for item in self.finder_table.get_children():
+            values = self.finder_table.item(item, 'values')
+            criteria.append((values[0], values[1], values[3] if len(values) > 3 else ""))
+
+        # Parse the shared Date Range Filter (MM/DD/YYYY)
+        date_from_str = self.finder_date_from.get().strip()
+        date_to_str = self.finder_date_to.get().strip()
+        from_date = None
+        to_date = None
+
+        if date_from_str:
+            try:
+                from_date = datetime.strptime(date_from_str, "%m/%d/%Y").date()
+            except ValueError:
+                messagebox.showerror("Error", f"Invalid 'From' date format: {date_from_str}\nUse MM/DD/YYYY")
+                return
+
+        if date_to_str:
+            try:
+                to_date = datetime.strptime(date_to_str, "%m/%d/%Y").date()
+            except ValueError:
+                messagebox.showerror("Error", f"Invalid 'To' date format: {date_to_str}\nUse MM/DD/YYYY")
+                return
+
+        if not criteria and not from_date and not to_date:
+            messagebox.showerror("Error",
+                "Please add patient names to the criteria table, set a date range, or both.")
+            return
+
+        self.finder_status_var.set("Listing Dropbox files...")
+        self.root.update_idletasks()
+
+        # List files from Dropbox, apply date range + keyword filters
+        try:
+            folder = self.dropbox_folder_var.get().strip()
+            all_files = self.dropbox_service.list_supported_files(folder)
+
+            if from_date or to_date:
+                filtered = []
+                for m in all_files:
+                    mod = getattr(m, 'server_modified', None) or getattr(m, 'client_modified', None)
+                    if mod is None:
+                        continue
+                    # Dropbox returns timezone-aware UTC datetimes; strip tz before
+                    # extracting date so it compares cleanly against our naive dates.
+                    if hasattr(mod, 'tzinfo') and mod.tzinfo is not None:
+                        mod = mod.replace(tzinfo=None)
+                    mod_date = mod.date() if hasattr(mod, 'date') else mod
+                    if from_date and mod_date < from_date:
+                        continue
+                    if to_date and mod_date > to_date:
+                        continue
+                    filtered.append(m)
+                self.finder_log_msg(f"   📅 Date range → {len(filtered)} of {len(all_files)} files")
+                all_files = filtered
+
+            keyword = self.dropbox_keyword_var.get().strip()
+            if keyword:
+                all_files = [m for m in all_files if keyword.lower() in m.name.lower()]
+                self.finder_log_msg(f"   🔤 Type filter '{keyword}' → {len(all_files)} files")
+
+            self.finder_log_msg(f"☁️  {len(all_files)} Dropbox files after filters.")
+        except Exception as e:
+            messagebox.showerror("Dropbox Error", f"Failed to list files:\n{e}")
+            return
+
+        dest_path = pathlib.Path(dest)
+        dest_path.mkdir(parents=True, exist_ok=True)
+
+        found_matches = []
+        not_found_list = []
+        matched = 0
+
+        if not criteria:
+            # ── Date-range-only mode: download every file that passed the filters ──
+            self.finder_log_msg(f"   📥 Date-range mode: downloading {len(all_files)} files...")
+            for meta in all_files:
+                dest_file = dest_path / meta.name
+                if not dest_file.exists():
+                    try:
+                        self.finder_log_msg(f"   ⬇️  {meta.name}")
+                        self.dropbox_service.download_file(meta, str(dest_path))
+                        # Auto-unlock encrypted PDFs in place
+                        self._auto_unlock_pdf(str(dest_file))
+                        matched += 1
+                    except Exception as e:
+                        self.finder_log_msg(f"   ❌ Download failed {meta.name}: {e}")
+                        continue
+                else:
+                    matched += 1
+                found_matches.append((meta.name, "", meta.name, ""))
+            self.finder_duplicate_imports = []
+            self.finder_original_count = len(found_matches)
+        else:
+            # ── Name-matching mode (date range already applied to all_files above) ──
+            all_imports_by_key = {}
+            original_criteria_count = len(criteria)
+            for name, auth_type, last_dos in criteria:
+                key = (name.upper().strip(), auth_type.upper().strip())
+                all_imports_by_key.setdefault(key, []).append((name, auth_type, last_dos))
+
+            duplicate_import_entries = [e for entries in all_imports_by_key.values() for e in entries[1:]]
+            criteria_for_search = [(v[0][0], v[0][1], v[0][2]) for v in all_imports_by_key.values()]
+
+            self.finder_log_msg(f"   🔍 Matching {len(criteria_for_search)} patients against {len(all_files)} files...")
+
+            name_found_type_mismatch = []
+            not_found_at_all = []
+
+            for name, auth_type, last_dos in criteria_for_search:
+                name_lower = name.lower()
+                name_cleaned = re.sub(r'\s*\([^)]*\)\s*', ' ', name_lower)
+                name_parts = [p for p in name_cleaned.replace(",", " ").split() if len(p) > 2]
+
+                matching_files, name_only_matches = [], []
+
+                for meta in all_files:
+                    fn_lower = meta.name.lower()
+                    if name_parts:
+                        hits = sum(1 for p in name_parts if p in fn_lower)
+                        n_match = hits == len(name_parts) if len(name_parts) <= 2 else hits >= len(name_parts) - 1
+                    else:
+                        n_match = False
+
+                    if auth_type.lower() == "skilled":
+                        k_match = "skilled" in fn_lower and "unskilled" not in fn_lower
+                    elif auth_type.lower() == "escort":
+                        k_match = "escort" in fn_lower
+                    elif auth_type.lower() == "unskilled":
+                        k_match = "unskilled" in fn_lower
+                    else:
+                        k_match = False
+
+                    if n_match:
+                        mod = getattr(meta, 'server_modified', None) or getattr(meta, 'client_modified', None)
+                        if k_match:
+                            matching_files.append((meta, mod))
+                        else:
+                            found_type = ("Skilled" if "skilled" in fn_lower and "unskilled" not in fn_lower
+                                          else "Unskilled" if "unskilled" in fn_lower
+                                          else "Escort" if "escort" in fn_lower else "")
+                            if found_type:
+                                name_only_matches.append((meta, found_type))
+
+                key = (name.upper().strip(), auth_type.upper().strip())
+                all_for_name = all_imports_by_key.get(key, [(name, auth_type, last_dos)])
+
+                if matching_files:
+                    matching_files.sort(key=lambda x: x[1] if x[1] else datetime.min, reverse=True)
+                    best = matching_files[0][0]
+                    dest_file = dest_path / best.name
+                    if not dest_file.exists():
+                        try:
+                            self.finder_log_msg(f"   ⬇️  {best.name}")
+                            self.dropbox_service.download_file(best, str(dest_path))
+                            # Auto-unlock encrypted PDFs in place
+                            self._auto_unlock_pdf(str(dest_file))
+                            matched += 1
+                        except Exception as e:
+                            self.finder_log_msg(f"   ❌ Download failed {best.name}: {e}")
+                            for n, t, d in all_for_name:
+                                not_found_at_all.append((n, t, d))
+                            continue
+                    for n, t, d in all_for_name:
+                        found_matches.append((n, t, best.name, d))
+                elif name_only_matches:
+                    found_type = name_only_matches[0][1]
+                    for n, t, d in all_for_name:
+                        name_found_type_mismatch.append((n, t, found_type, d))
+                else:
+                    for n, t, d in all_for_name:
+                        not_found_at_all.append((n, t, d))
+
+            self.finder_duplicate_imports = duplicate_import_entries
+            self.finder_original_count = original_criteria_count
+            for n, wt, ft, d in name_found_type_mismatch:
+                not_found_list.append((n, wt, f"Type mismatch — wanted {wt}, found {ft}", d))
+            for n, t, d in not_found_at_all:
+                not_found_list.append((n, t, "Not found in Dropbox", d))
+
+        # Store results
+        self.finder_found_matches = found_matches
+        self.finder_not_found = not_found_list
+
+        if hasattr(self, 'finder_files_count_var'):
+            self.update_finder_files_count()
+
+        self.populate_finder_results()
+        self.finder_status_var.set(f"Done — {matched} files downloaded, {len(not_found_list)} not found")
+
+        messagebox.showinfo("Dropbox File Finder Complete",
+            f"Downloaded {matched} files to:\n{dest}\n\n"
+            f"Files found: {len(found_matches)}\n"
+            f"Not found: {len(not_found_list)}")
 
     def toggle_finder_view(self, view):
         """Toggle between search criteria view and results view."""
@@ -6452,6 +6837,11 @@ PACE Authorization Team""")
     
     def run_file_finder(self):
         """Run the file finder process."""
+        # Route to Dropbox handler if Dropbox source selected
+        if self.finder_source_type.get() == "dropbox":
+            self._run_finder_from_dropbox()
+            return
+
         source = self.finder_source.get()
         dest = self.finder_dest.get()
         
@@ -6664,6 +7054,8 @@ PACE Authorization Team""")
                 if dest_file not in copied_files:
                     try:
                         shutil.copy2(most_recent_pdf, dest_file)
+                        # Auto-unlock encrypted PDFs in place
+                        self._auto_unlock_pdf(str(dest_file))
                         copied_files.append(dest_file)
                         matched += 1
                     except Exception as e:
@@ -6840,17 +7232,20 @@ PACE Authorization Team""")
         try:
             self.log(f"📁 Scanning folder: {input_folder}")
             
-            # Count PDFs
-            pdf_count = len(list(pathlib.Path(input_folder).glob("*.pdf")))
-            self.log(f"📄 Found {pdf_count} PDF files")
+            # Count all supported files
+            from config import SUPPORTED_EXTENSIONS
+            folder = pathlib.Path(input_folder)
+            total_files = sum(len(list(folder.rglob(f"*{ext}"))) for ext in SUPPORTED_EXTENSIONS)
+            pdf_count = len(list(folder.rglob("*.pdf")))
+            self.log(f"📄 Found {total_files} supported files ({pdf_count} PDFs)")
             
-            if pdf_count == 0:
-                self.root.after(0, lambda: messagebox.showwarning("Warning", "No PDF files found in folder"))
+            if total_files == 0:
+                self.root.after(0, lambda: messagebox.showwarning("Warning", "No supported files found in folder"))
                 return
             
-            # Process PDFs
-            self.log("\n🔍 Extracting data from PDFs (this may take a while with OCR)...")
-            results = self.extractor.process_folder(
+            # Process all supported file types
+            self.log("\n🔍 Extracting data (routing each file to the best method)...")
+            results = self.extractor.process_all_files(
                 input_folder, 
                 progress_callback=lambda c, t, f: self.root.after(0, lambda: self.update_progress(c, t, f))
             )
@@ -6862,7 +7257,7 @@ PACE Authorization Team""")
             # Summary
             successful = len([r for r in results if "error" not in r])
             errors = len([r for r in results if "error" in r])
-            ocr_count = len([r for r in results if r.get("extraction_method") == "ocr"])
+            ocr_count = len([r for r in results if r.get("extraction_method") in ("ocr", "tesseract_image")])
             
             self.log(f"\n✅ Combined Export Complete!")
             self.log(f"   PDFs Processed: {successful}")
@@ -6887,8 +7282,9 @@ PACE Authorization Team""")
                 f"Output: {output_file}"))
             
         except Exception as e:
-            self.log(f"\n❌ Error: {str(e)}")
-            self.root.after(0, lambda: messagebox.showerror("Error", str(e)))
+            err_msg = str(e)
+            self.log(f"\n❌ Error: {err_msg}")
+            self.root.after(0, lambda m=err_msg: messagebox.showerror("Error", m))
         finally:
             self.is_processing = False
             self.root.after(0, lambda: self.extract_btn.config(state=tk.NORMAL))
@@ -7366,13 +7762,11 @@ PACE Authorization Team""")
     def update_source_selection(self):
         """Update UI based on source selection for extraction."""
         source_type = self.extract_source_type.get()
+        self.manual_folder_frame.pack_forget()
         if source_type == "finder":
-            # Hide manual folder selection
-            self.manual_folder_frame.pack_forget()
-            # Update count from finder results  
             self.update_finder_files_count()
         else:
-            # Show manual folder selection
+            # manual
             self.manual_folder_frame.pack(fill=tk.X, pady=(5, 0))
     
     def update_finder_files_count(self):
@@ -7501,6 +7895,249 @@ PACE Authorization Team""")
                 f"Successfully synced {count} patient names from Caspio.\n\n"
                 f"Patient names will now be matched against this list when extracting data.")
 
+    # ------------------------------------------------------------------
+    # Dropbox integration methods
+    # ------------------------------------------------------------------
+
+    def _connect_dropbox(self):
+        """Connect to Dropbox using credentials from .env."""
+        try:
+            from integrations.dropbox_service import DropboxService, DROPBOX_AVAILABLE
+            if not DROPBOX_AVAILABLE:
+                messagebox.showerror("Error",
+                    "The 'dropbox' package is not installed.\nRun: pip install dropbox")
+                return
+
+            from config import DROPBOX_APP_KEY, DROPBOX_REFRESH_TOKEN
+            if not DROPBOX_APP_KEY or not DROPBOX_REFRESH_TOKEN:
+                messagebox.showerror("Dropbox Setup Required",
+                    "Dropbox credentials not configured.\n\n"
+                    "1. Create a Dropbox app at:\n"
+                    "   https://www.dropbox.com/developers/apps\n\n"
+                    "2. Run this in a terminal to get a refresh token:\n"
+                    "   python -c \"from integrations.dropbox_service import "
+                    "run_dropbox_oauth_flow; run_dropbox_oauth_flow()\"\n\n"
+                    "3. Add DROPBOX_APP_KEY, DROPBOX_APP_SECRET,\n"
+                    "   and DROPBOX_REFRESH_TOKEN to your .env file.")
+                return
+
+            self.log("🔗 Connecting to Dropbox...")
+            self.dropbox_service = DropboxService()
+            self.dropbox_service.connect()
+
+            self.dropbox_status_var.set("✅ connected")
+            self.dropbox_connect_btn.configure(text="✅ Connected")
+            self.log("   ✅ Dropbox connected!")
+
+            # Auto-fill the folder if DROPBOX_ROOT_FOLDER is set
+            from config import DROPBOX_ROOT_FOLDER
+            if DROPBOX_ROOT_FOLDER and not self.dropbox_folder_var.get():
+                self.dropbox_folder_var.set(DROPBOX_ROOT_FOLDER)
+
+            # Populate folder dropdown
+            self._refresh_dropbox_folders()
+
+        except Exception as e:
+            self.dropbox_status_var.set("❌ error")
+            self.log(f"   ❌ Dropbox connection failed: {e}")
+            messagebox.showerror("Dropbox Error", str(e))
+
+    def _refresh_dropbox_folders(self):
+        """Populate the folder combobox with sub-folders from the Dropbox root."""
+        if not self.dropbox_service or not self.dropbox_service.is_connected:
+            return
+        try:
+            folders = self.dropbox_service.list_folders()
+            if hasattr(self, 'dropbox_folder_combo'):
+                self.dropbox_folder_combo['values'] = folders
+        except Exception as e:
+            self.log(f"   ⚠️ Could not list Dropbox folders: {e}")
+
+    def _list_dropbox_files(self):
+        """List supported files in the chosen Dropbox folder, with optional date filter."""
+        if not hasattr(self, 'dropbox_tree'):
+            return  # tree not present in current layout
+        if not self.dropbox_service or not self.dropbox_service.is_connected:
+            messagebox.showwarning("Warning", "Connect to Dropbox first.")
+            return
+
+        folder = self.dropbox_folder_var.get().strip()
+        self.log(f"☁️  Listing files in Dropbox: {folder or '/'}")
+
+        # Parse optional date filter
+        filter_date = None
+        date_str = self.dropbox_date_filter_var.get().strip()
+        if date_str:
+            try:
+                from datetime import datetime
+                filter_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+                self.log(f"   📅 Filtering: uploaded on or after {date_str}")
+            except ValueError:
+                messagebox.showwarning("Invalid Date", f"Date format must be YYYY-MM-DD (e.g. 2026-03-20).\nGot: {date_str}")
+                return
+
+        try:
+            all_files = self.dropbox_service.list_supported_files(folder)
+
+            # Apply date filter if set
+            if filter_date:
+                filtered = []
+                for meta in all_files:
+                    mod = getattr(meta, "server_modified", None) or getattr(meta, "client_modified", None)
+                    if mod and mod.date() >= filter_date:
+                        filtered.append(meta)
+                skipped = len(all_files) - len(filtered)
+                if skipped:
+                    self.log(f"   ⏭️  Skipped {skipped} files older than {date_str}")
+                all_files = filtered
+
+            # Apply keyword filter if set
+            keyword = self.dropbox_keyword_var.get().strip()
+            if keyword:
+                before_kw = len(all_files)
+                all_files = [m for m in all_files if keyword.lower() in m.name.lower()]
+                skipped_kw = before_kw - len(all_files)
+                if skipped_kw:
+                    self.log(f"   ⏭️  Skipped {skipped_kw} files not matching '{keyword}'")
+
+            # Apply patient name list filter if set
+            if self.dropbox_name_filter_list:
+                before_name = len(all_files)
+                all_files = [
+                    m for m in all_files
+                    if any(n.lower() in m.name.lower() for n in self.dropbox_name_filter_list)
+                ]
+                skipped_name = before_name - len(all_files)
+                if skipped_name:
+                    self.log(f"   ⏭️  Skipped {skipped_name} files not matching any of {len(self.dropbox_name_filter_list)} names")
+
+            self.dropbox_files = all_files
+
+            # Populate treeview
+            for row in self.dropbox_tree.get_children():
+                self.dropbox_tree.delete(row)
+
+            for meta in self.dropbox_files:
+                size_str = self._fmt_bytes(meta.size)
+                mod = getattr(meta, "server_modified", None) or getattr(meta, "client_modified", None)
+                mod_str = mod.strftime("%Y-%m-%d") if mod else ""
+                self.dropbox_tree.insert("", tk.END,
+                                         values=(meta.name, meta.path_display, mod_str, size_str))
+
+            count = len(self.dropbox_files)
+            status_parts = [f"✅ {count} files"]
+            if filter_date:
+                status_parts.append(f"from {date_str}")
+            if keyword:
+                status_parts.append(f"'{keyword}'")
+            if self.dropbox_name_filter_list:
+                status_parts.append(f"{len(self.dropbox_name_filter_list)} names")
+            self.dropbox_status_var.set(" | ".join(status_parts))
+            self.dropbox_status_var.set(" | ".join(status_parts))
+            self.log(f"   Found {count} supported files")
+
+            # Auto-set output file if not yet set
+            if not self.output_file.get():
+                default_output = pathlib.Path.cwd() / "Dropbox_Auth_Results.xlsx"
+                self.output_file.set(str(default_output))
+
+        except Exception as e:
+            self.log(f"   ❌ Error listing Dropbox files: {e}")
+            messagebox.showerror("Dropbox Error", str(e))
+
+    def _clear_name_filter(self):
+        """Clear the patient name filter list."""
+        self.dropbox_name_filter_list = []
+        self.dropbox_name_count_var.set("(none)")
+
+    def _open_name_filter_popup(self):
+        """Open a popup to manage the patient name filter list."""
+        popup = tk.Toplevel(self.root)
+        popup.title("Filter by Patient Names")
+        popup.geometry("480x500")
+        popup.transient(self.root)
+        popup.grab_set()
+        self.style_popup(popup)
+
+        popup.update_idletasks()
+        x = self.root.winfo_x() + (self.root.winfo_width() // 2) - 240
+        y = self.root.winfo_y() + (self.root.winfo_height() // 2) - 250
+        popup.geometry(f"+{x}+{y}")
+
+        frame = ttk.Frame(popup, padding="15")
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(frame, text="Patient Name Filter List",
+                  font=("Segoe UI", 13, "bold")).pack(anchor=tk.W, pady=(0, 4))
+        ttk.Label(frame,
+                  text="Only files containing at least one name below will be listed.\n"
+                       "One name per line. Partial / case-insensitive match.",
+                  font=("Segoe UI", 9), foreground="gray").pack(anchor=tk.W, pady=(0, 10))
+
+        # Text area
+        txt_frame = ttk.Frame(frame)
+        txt_frame.pack(fill=tk.BOTH, expand=True)
+        txt = tk.Text(txt_frame, font=("Consolas", 10), height=18,
+                      bg="#1E293B", fg="#E5E7EB", insertbackground="#E5E7EB",
+                      relief="solid", borderwidth=1, padx=6, pady=6)
+        sb = ttk.Scrollbar(txt_frame, orient=tk.VERTICAL, command=txt.yview)
+        txt.configure(yscrollcommand=sb.set)
+        txt.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        sb.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Pre-fill with existing names
+        if self.dropbox_name_filter_list:
+            txt.insert("1.0", "\n".join(self.dropbox_name_filter_list))
+
+        # Row count label
+        count_lbl = ttk.Label(frame, text="", font=("Segoe UI", 8), foreground="gray")
+        count_lbl.pack(anchor=tk.W, pady=(4, 0))
+
+        def _update_count(event=None):
+            names = [n.strip() for n in txt.get("1.0", tk.END).split("\n") if n.strip()]
+            count_lbl.config(text=f"{len(names)} name(s) entered")
+
+        txt.bind("<KeyRelease>", _update_count)
+        txt.bind("<<Paste>>", lambda e: popup.after(50, _update_count))
+        _update_count()
+
+        def apply():
+            raw = txt.get("1.0", tk.END)
+            names = [n.strip() for n in raw.split("\n") if n.strip()]
+            self.dropbox_name_filter_list = names
+            if names:
+                self.dropbox_name_count_var.set(f"{len(names)} name(s) active")
+            else:
+                self.dropbox_name_count_var.set("(none)")
+            popup.destroy()
+
+        btn_row = ttk.Frame(frame)
+        btn_row.pack(fill=tk.X, pady=(12, 0))
+        ttk.Button(btn_row, text="✅ Apply", command=apply,
+                   style="Action.TButton").pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(btn_row, text="🗑️ Clear All",
+                   command=lambda: txt.delete("1.0", tk.END)).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(btn_row, text="Cancel", command=popup.destroy).pack(side=tk.LEFT)
+
+        txt.focus_set()
+
+    def _log_dropbox_download(self, current, total, filename):
+        """Log callback for Dropbox download progress."""
+        self.status_text.set(f"Downloading {current}/{total}: {filename}")
+        self.log(f"   ⬇️  {current}/{total} {filename}")
+        pct = (current / total) * 30  # first 30% of progress bar = download
+        self.progress_bar["value"] = pct
+        self.root.update_idletasks()
+
+    @staticmethod
+    def _fmt_bytes(n):
+        """Format bytes as human-readable string."""
+        for unit in ("B", "KB", "MB", "GB"):
+            if abs(n) < 1024:
+                return f"{n:.0f} {unit}"
+            n /= 1024
+        return f"{n:.1f} TB"
+
     def start_extraction(self):
         """Start the extraction process."""
         if self.is_processing:
@@ -7515,6 +8152,16 @@ PACE Authorization Team""")
             if not input_folder:
                 messagebox.showerror("Error", "No File Finder destination set.\n\nRun File Finder first to find and copy PDFs,\nor select 'Select folder manually' option.")
                 return
+        elif source_type == "dropbox":
+            # Download Dropbox files to a temp folder, then extract from there
+            if not self.dropbox_service or not self.dropbox_service.is_connected:
+                messagebox.showerror("Error", "Not connected to Dropbox.\nClick 'Connect' first.")
+                return
+            if not self.dropbox_files:
+                messagebox.showerror("Error", "No Dropbox files listed.\nClick 'List Files' first.")
+                return
+            # Download will happen in the extraction thread
+            input_folder = "__dropbox__"  # sentinel value
         else:
             # Use manual folder selection
             input_folder = self.input_folder.get()
@@ -7528,7 +8175,7 @@ PACE Authorization Team""")
             messagebox.showerror("Error", "Please specify an output file")
             return
         
-        if not pathlib.Path(input_folder).exists():
+        if input_folder != "__dropbox__" and not pathlib.Path(input_folder).exists():
             messagebox.showerror("Error", "Input folder does not exist")
             return
         
@@ -7548,64 +8195,85 @@ PACE Authorization Team""")
     def run_extraction(self, input_folder, output_file):
         """Run extraction process (in separate thread)."""
         try:
+            # --- Dropbox download step ---
+            if input_folder == "__dropbox__":
+                self.log("☁️  Downloading files from Dropbox...")
+                try:
+                    downloaded = self.dropbox_service.download_files(
+                        self.dropbox_files,
+                        progress_callback=lambda c, t, f: self.root.after(
+                            0, lambda _c=c, _t=t, _f=f: self._log_dropbox_download(_c, _t, _f)),
+                    )
+                    if not downloaded:
+                        self.root.after(0, lambda: messagebox.showwarning("Warning", "No files downloaded from Dropbox"))
+                        return
+                    # Use the temp directory that contains downloaded files
+                    input_folder = self.dropbox_service._get_temp_dir()
+                    self.log(f"✅ Downloaded {len(downloaded)} files to temp folder")
+                except Exception as e:
+                    err_msg = str(e)
+                    self.log(f"❌ Dropbox download failed: {err_msg}")
+                    self.root.after(0, lambda m=err_msg: messagebox.showerror("Dropbox Error", m))
+                    return
+
             self.log(f"📁 Scanning folder: {input_folder}")
             
-            # Count PDFs
-            pdf_count = len(list(pathlib.Path(input_folder).glob("*.pdf")))
-            self.log(f"📄 Found {pdf_count} PDF files")
-            
-            if pdf_count == 0:
+            # Count PDF files
+            folder = pathlib.Path(input_folder)
+            pdf_files = sorted(folder.glob("*.pdf"))
+            total_files = len(pdf_files)
+
+            if total_files == 0:
                 self.root.after(0, lambda: messagebox.showwarning("Warning", "No PDF files found in folder"))
                 return
-            
-            # Process PDFs
-            self.log("\n🔍 Extracting data from PDFs (this may take a while with OCR)...")
-            results = self.extractor.process_folder(
-                input_folder, 
-                progress_callback=lambda c, t, f: self.root.after(0, lambda: self.update_progress(c, t, f))
-            )
-            
-            # Export to Excel - use combined workbook to include Last DOS and highlighting
-            self.log(f"\n📊 Exporting to Excel: {output_file}")
-            formatted_df = self.export_combined_workbook(output_file)
-            
-            # Build errors DataFrame
-            error_records = [r for r in results if r.get("error")]
-            errors_df = pd.DataFrame(error_records) if error_records else None
-            
-            # Populate the in-app results table for review/editing (with errors)
-            if formatted_df is not None:
-                self.root.after(0, lambda df=formatted_df, err_df=errors_df, total=pdf_count: 
-                               self.populate_results_table(df, err_df, total))
-            
-            # Switch to Review & Edit tab
-            self.root.after(0, lambda: self.notebook.select(self.review_tab))
-            
-            # Summary
-            successful = len([r for r in results if "error" not in r])
-            errors = len([r for r in results if "error" in r])
-            ocr_count = len([r for r in results if r.get("extraction_method") == "ocr"])
-            
-            # Get patient name match stats
-            match_stats = getattr(self.extractor, 'last_match_stats', {"matched": 0, "not_matched": 0, "no_name": 0})
-            matched = match_stats.get("matched", 0)
-            not_matched = match_stats.get("not_matched", 0)
-            
+
+            self.log(f"   PDF files: {total_files}")
+
+            # --- Unlock PDFs ---
+            # Decrypts password-protected PDFs so they can be opened/uploaded freely
+            self.log("\n🔓 Unlocking PDFs...")
+            from services.pdf_unlock_service import PdfUnlockService
+            import shutil as _shutil
+
+            unlock_service = PdfUnlockService()
+            # Save unlocked PDFs to a "Unlocked" subfolder next to the output file
+            output_folder = str(pathlib.Path(output_file).parent / "Unlocked PDFs")
+            os.makedirs(output_folder, exist_ok=True)
+
+            successful = 0
+            errors = 0
+            for i, pdf_file in enumerate(pdf_files):
+                self.root.after(0, lambda c=i+1, t=total_files, f=pdf_file.name: self.update_progress(c, t, f))
+                try:
+                    unlocked_path, was_encrypted = unlock_service.unlock(str(pdf_file))
+                    dest_path = os.path.join(output_folder, pdf_file.name)
+                    if was_encrypted:
+                        _shutil.move(unlocked_path, dest_path)
+                        self.log(f"  🔓 Unlocked: {pdf_file.name}")
+                    else:
+                        _shutil.copy2(str(pdf_file), dest_path)
+                        self.log(f"  ✓ Copied (not encrypted): {pdf_file.name}")
+                    successful += 1
+                except Exception as ex:
+                    self.log(f"  ❌ Failed: {pdf_file.name} - {ex}")
+                    errors += 1
+
             self.log(f"\n✅ Complete!")
-            self.log(f"   Successful: {successful}")
-            self.log(f"   Used OCR: {ocr_count}")
+            self.log(f"   PDFs saved: {successful}")
             self.log(f"   Errors: {errors}")
-            self.log(f"   Patient names found in Caspio: {matched}")
-            self.log(f"   Patient names NOT in Caspio: {not_matched}")
-            self.log(f"   Output: {output_file}")
+            self.log(f"   Output folder: {output_folder}")
             
-            self.root.after(0, lambda: self.status_text.set(f"Done! Extracted {successful} files - see Review & Edit tab"))
-            self.root.after(0, lambda: messagebox.showinfo("Success", 
-                f"Extraction complete!\n\nProcessed: {pdf_count} files\nSuccessful: {successful}\nUsed OCR: {ocr_count}\nErrors: {errors}\n\nPatient names found in Caspio: {matched}\nPatient names NOT in Caspio: {not_matched}\n\nSwitching to Review & Edit tab to review and upload."))
+            self.root.after(0, lambda: self.status_text.set(f"Done! {successful} PDFs unlocked"))
+            self.root.after(0, lambda f=output_folder, s=successful, e=errors, t=total_files: messagebox.showinfo("Success", 
+                f"Download complete!\n\nProcessed: {t} PDFs\nSaved: {s}\nErrors: {e}\n\nFolder:\n{f}"))
+            
+            # Open the output folder in Explorer
+            self.root.after(500, lambda f=output_folder: os.startfile(f) if os.path.isdir(f) else None)
             
         except Exception as e:
-            self.log(f"\n❌ Error: {str(e)}")
-            self.root.after(0, lambda: messagebox.showerror("Error", str(e)))
+            err_msg = str(e)
+            self.log(f"\n❌ Error: {err_msg}")
+            self.root.after(0, lambda m=err_msg: messagebox.showerror("Error", m))
         finally:
             self.is_processing = False
             self.root.after(0, lambda: self.extract_btn.config(state=tk.NORMAL))
@@ -7938,6 +8606,20 @@ PACE Authorization Team""")
                 caspio = CaspioAPI()
                 results = caspio.insert_records(CASPIO_TABLE_NAME, caspio_records)
                 
+                # Audit log the upload
+                try:
+                    from audit.logger import AuditLogger
+                    audit = AuditLogger()
+                    audit.log_upload(
+                        source_file=f"batch_{len(caspio_records)}_records",
+                        table_name=CASPIO_TABLE_NAME,
+                        record_count=results['success'],
+                        status="success" if results['failed'] == 0 else "partial",
+                        error="; ".join(results.get('errors', [])[:3]) if results['failed'] > 0 else "",
+                    )
+                except Exception:
+                    pass  # audit failure should not block upload feedback
+                
                 status_var.set(f"✅ Upload complete! Success: {results['success']}, Failed: {results['failed']}")
                 status_label.config(foreground="green")
                 
@@ -8011,7 +8693,7 @@ def main():
 
     # Set logo as app icon for ALL windows (taskbar, title bar, alt-tab)
     _icon_photo = None  # keep ref to prevent GC
-    _icon_path = APP_DIR / "auth_radar_logo.png"
+    _icon_path = APP_DIR / "Auth Radar Logo.png"
     if _icon_path.exists():
         try:
             from PIL import Image, ImageTk
