@@ -2,7 +2,7 @@
 Auth Radar - Page Detection Service
 
 Identifies the page in a PDF most likely to contain the Treatment Authorization Form.
-Renders candidate pages to high-resolution images for OpenAI extraction.
+Renders candidate pages to high-resolution images.
 """
 
 import logging

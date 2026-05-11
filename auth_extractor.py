@@ -128,19 +128,12 @@ except ImportError:
     ML_AVAILABLE = False
     print("ML module not available. Using regex extraction only.")
 
-# Azure Document Intelligence
-try:
-    from azure.ai.formrecognizer import DocumentAnalysisClient
-    from azure.core.credentials import AzureKeyCredential
-    AZURE_AVAILABLE = True
-except ImportError:
-    AZURE_AVAILABLE = False
-    print("Azure Document Intelligence not available. Using local OCR.")
+# Azure integration is intentionally disabled in this app.
+AZURE_AVAILABLE = False
 
 # --- Centralized configuration (credentials, paths, field list) ---
 # Loaded from config.py which reads .env for secrets
 from config import (
-    AZURE_ENDPOINT, AZURE_KEY, AZURE_MODEL_ID,
     CASPIO_ACCOUNT_ID, CASPIO_CLIENT_ID, CASPIO_CLIENT_SECRET, CASPIO_TABLE_NAME,
     FIELDS, APP_DIR, POPPLER_PATH, PATIENT_NAMES_FILE, PDF_PASSWORD,
 )
@@ -1042,20 +1035,9 @@ class PDFExtractor:
         if self.tesseract_path and OCR_AVAILABLE:
             pytesseract.pytesseract.tesseract_cmd = self.tesseract_path
         
-        # Initialize Azure Document Intelligence client
+        # Azure extraction is disabled; always use local OCR/regex pipeline.
         self.azure_client = None
         self.use_azure = False
-        if AZURE_AVAILABLE and AZURE_KEY and AZURE_ENDPOINT:
-            try:
-                self.azure_client = DocumentAnalysisClient(
-                    AZURE_ENDPOINT, 
-                    AzureKeyCredential(AZURE_KEY)
-                )
-                self.use_azure = True
-                print(f"Azure Document Intelligence enabled (model: {AZURE_MODEL_ID}).")
-            except Exception as e:
-                print(f"Could not initialize Azure client: {e}. Using local OCR.")
-                self.use_azure = False
         
         # Initialize ML extractor if available
         self.ml_extractor = None
@@ -1076,57 +1058,10 @@ class PDFExtractor:
     
     def extract_with_azure(self, pdf_path):
         """
-        Extract fields using Azure Document Intelligence custom model.
-        Returns dict with extracted fields or None if extraction fails.
+        Legacy Azure extraction hook.
+        Azure is decommissioned for this app, so this always returns None.
         """
-        if not self.use_azure or not self.azure_client:
-            return None
-        
-        try:
-            with open(pdf_path, "rb") as f:
-                poller = self.azure_client.begin_analyze_document(AZURE_MODEL_ID, f)
-                result = poller.result()
-            
-            extracted = {}
-            for doc in result.documents:
-                for name, field in doc.fields.items():
-                    if field.value:
-                        # Map Azure field names to our field names
-                        field_name = name.replace("_", " ")
-                        # Normalize field names
-                        if "patient name" in field_name.lower() or field_name == "Patient Name":
-                            extracted["Patient Name"] = field.value
-                            extracted["Patient Name_confidence"] = field.confidence
-                            extracted["Patient Name_method"] = "azure"
-                        elif "auth" in field_name.lower() and "#" in field_name:
-                            extracted["Auth #"] = str(field.value)
-                            extracted["Auth #_confidence"] = field.confidence
-                            extracted["Auth #_method"] = "azure"
-                        elif "date approved" in field_name.lower():
-                            # Handle date value - could be string or date object
-                            if hasattr(field.value, 'strftime'):
-                                extracted["Date Approved"] = field.value.strftime("%m/%d/%Y")
-                            else:
-                                extracted["Date Approved"] = str(field.value)
-                            extracted["Date Approved_confidence"] = field.confidence
-                            extracted["Date Approved_method"] = "azure"
-                        elif "date auth expire" in field_name.lower() or "expire" in field_name.lower():
-                            if hasattr(field.value, 'strftime'):
-                                extracted["Date Auth Expire"] = field.value.strftime("%m/%d/%Y")
-                            else:
-                                extracted["Date Auth Expire"] = str(field.value)
-                            extracted["Date Auth Expire_confidence"] = field.confidence
-                            extracted["Date Auth Expire_method"] = "azure"
-                        elif "patient id" in field_name.lower() or "participant id" in field_name.lower():
-                            extracted["Patient ID"] = str(field.value)
-                            extracted["Patient ID_confidence"] = field.confidence
-                            extracted["Patient ID_method"] = "azure"
-            
-            return extracted if extracted else None
-            
-        except Exception as e:
-            print(f"Azure extraction error: {e}")
-            return None
+        return None
     
     def find_auth_page(self, page_texts):
         """Find the page containing the TREATMENT AUTHORIZATION FORM."""
@@ -3431,7 +3366,7 @@ class AuthExtractorApp:
         button_frame = ttk.Frame(main_frame)
         button_frame.pack(fill=tk.X, pady=(6, 2), side=tk.BOTTOM)
 
-        self.extract_btn = ttk.Button(button_frame, text="� Download & Unlock PDFs",
+        self.extract_btn = ttk.Button(button_frame, text="🚀 Start Extraction",
                                       command=self.start_extraction, style='Action.TButton')
         self.extract_btn.pack(side=tk.LEFT, padx=5)
 
@@ -4288,16 +4223,6 @@ class AuthExtractorApp:
         self.dropbox_folder_combo.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 4))
         ttk.Button(_dbx_r1, text="🔄", width=3,
                    command=self._refresh_dropbox_folders).pack(side=tk.LEFT)
-
-        # Row 2: Type/keyword filter
-        _dbx_r3 = ttk.Frame(self.finder_dropbox_source_frame)
-        _dbx_r3.pack(fill=tk.X)
-        ttk.Label(_dbx_r3, text="Type filter:").pack(side=tk.LEFT, padx=(0, 6))
-        for _kw in ("Skilled", "Unskilled", "Escort"):
-            ttk.Radiobutton(_dbx_r3, text=_kw, variable=self.dropbox_keyword_var,
-                            value=_kw).pack(side=tk.LEFT, padx=(0, 10))
-        ttk.Radiobutton(_dbx_r3, text="All", variable=self.dropbox_keyword_var,
-                        value="").pack(side=tk.LEFT)
         
         # Destination folder selection
         dest_frame = ttk.LabelFrame(folders_frame, text="Destination Folder", padding="8")
@@ -4607,11 +4532,6 @@ class AuthExtractorApp:
                     filtered.append(m)
                 self.finder_log_msg(f"   📅 Date range → {len(filtered)} of {len(all_files)} files")
                 all_files = filtered
-
-            keyword = self.dropbox_keyword_var.get().strip()
-            if keyword:
-                all_files = [m for m in all_files if keyword.lower() in m.name.lower()]
-                self.finder_log_msg(f"   🔤 Type filter '{keyword}' → {len(all_files)} files")
 
             self.finder_log_msg(f"☁️  {len(all_files)} Dropbox files after filters.")
         except Exception as e:
@@ -8230,7 +8150,7 @@ PACE Authorization Team""")
             self.log(f"   PDF files: {total_files}")
 
             # --- Unlock PDFs ---
-            # Decrypts password-protected PDFs so they can be opened/uploaded freely
+            # Keep unlocked copies for manual review/upload (e.g., ChatGPT).
             self.log("\n🔓 Unlocking PDFs...")
             from services.pdf_unlock_service import PdfUnlockService
             import shutil as _shutil
@@ -8258,14 +8178,55 @@ PACE Authorization Team""")
                     self.log(f"  ❌ Failed: {pdf_file.name} - {ex}")
                     errors += 1
 
-            self.log(f"\n✅ Complete!")
+            if successful == 0:
+                self.root.after(0, lambda: messagebox.showwarning("Warning", "No PDFs were unlocked/copied. Extraction cannot continue."))
+                return
+
+            self.log(f"\n✅ Unlock step complete")
             self.log(f"   PDFs saved: {successful}")
-            self.log(f"   Errors: {errors}")
-            self.log(f"   Output folder: {output_folder}")
+            self.log(f"   Unlock errors: {errors}")
+            self.log(f"   Unlocked folder: {output_folder}")
+
+            # --- Normal data extraction step ---
+            self.log("\n🔍 Extracting data from unlocked PDFs...")
+            results = self.extractor.process_all_files(
+                output_folder,
+                progress_callback=lambda c, t, f: self.root.after(0, lambda _c=c, _t=t, _f=f: self.update_progress(_c, _t, _f))
+            )
+
+            self.log("\n📊 Exporting Excel workbook...")
+            self.extractor.export_to_excel(output_file)
+
+            # Load Review tab with latest results
+            if pd is not None:
+                try:
+                    df_formatted = pd.read_excel(output_file, sheet_name="Formatted")
+                except Exception:
+                    df_formatted = pd.DataFrame()
+                try:
+                    df_errors = pd.read_excel(output_file, sheet_name="Errors")
+                except Exception:
+                    df_errors = pd.DataFrame()
+                self.root.after(0, lambda dff=df_formatted, dfe=df_errors, tf=total_files: self.populate_results_table(dff, dfe, tf))
+
+            extracted_ok = len([r for r in results if not r.get("error")])
+            extracted_err = len([r for r in results if r.get("error")])
+
+            self.log(f"\n✅ Extraction complete!")
+            self.log(f"   Records extracted: {extracted_ok}")
+            self.log(f"   Extraction errors: {extracted_err}")
+            self.log(f"   Excel output: {output_file}")
             
-            self.root.after(0, lambda: self.status_text.set(f"Done! {successful} PDFs unlocked"))
-            self.root.after(0, lambda f=output_folder, s=successful, e=errors, t=total_files: messagebox.showinfo("Success", 
-                f"Download complete!\n\nProcessed: {t} PDFs\nSaved: {s}\nErrors: {e}\n\nFolder:\n{f}"))
+            self.root.after(0, lambda: self.status_text.set(f"Done! Extracted {extracted_ok} records"))
+            self.root.after(0, lambda: self.open_btn.config(state=tk.NORMAL))
+            self.root.after(0, lambda f=output_folder, out=output_file, s=successful, ue=errors, ok=extracted_ok, ee=extracted_err: messagebox.showinfo("Success", 
+                f"Extraction complete!\n\n"
+                f"Unlocked PDFs saved: {s}\n"
+                f"Unlock errors: {ue}\n"
+                f"Records extracted: {ok}\n"
+                f"Extraction errors: {ee}\n\n"
+                f"Unlocked folder:\n{f}\n\n"
+                f"Excel output:\n{out}"))
             
             # Open the output folder in Explorer
             self.root.after(500, lambda f=output_folder: os.startfile(f) if os.path.isdir(f) else None)

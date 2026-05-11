@@ -36,25 +36,12 @@ CASPIO_CLIENT_SECRET = os.getenv("CASPIO_CLIENT_SECRET", "")
 CASPIO_TABLE_NAME = os.getenv("CASPIO_TABLE_NAME", "a_Authorizations")
 
 # ---------------------------------------------------------------------------
-# Azure Document Intelligence (optional)
-# ---------------------------------------------------------------------------
-AZURE_ENDPOINT = os.getenv("AZURE_DOCUMENTINTELLIGENCE_ENDPOINT", "")
-AZURE_KEY = os.getenv("AZURE_DOCUMENTINTELLIGENCE_KEY", "")
-AZURE_MODEL_ID = os.getenv("AZURE_DOCUMENTINTELLIGENCE_MODEL_ID", "Pace_Auth_Model_V2")
-
-# ---------------------------------------------------------------------------
 # Dropbox
 # ---------------------------------------------------------------------------
 DROPBOX_APP_KEY = os.getenv("DROPBOX_APP_KEY", "")
 DROPBOX_APP_SECRET = os.getenv("DROPBOX_APP_SECRET", "")
 DROPBOX_REFRESH_TOKEN = os.getenv("DROPBOX_REFRESH_TOKEN", "")
 DROPBOX_ROOT_FOLDER = os.getenv("DROPBOX_ROOT_FOLDER", "")
-
-# ---------------------------------------------------------------------------
-# OpenAI
-# ---------------------------------------------------------------------------
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4.1")
 
 # ---------------------------------------------------------------------------
 # PDF / OCR

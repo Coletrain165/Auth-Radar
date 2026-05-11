@@ -78,7 +78,6 @@ def main():
         "--onedir",  # Create a folder with exe + dependencies (more reliable than onefile)
         "--windowed",  # No console window
         "--noconfirm",  # Overwrite without asking
-        "--clean",  # Clean cache
     ]
     
     # Add icon if it exists
@@ -98,7 +97,7 @@ def main():
         print("      .env found (will be included).")
 
     # Add new module packages
-    for pkg_dir in ["integrations", "extraction", "audit"]:
+    for pkg_dir in ["integrations", "extraction", "audit", "services", "review", "db"]:
         pkg_path = os.path.join(script_dir, pkg_dir)
         if os.path.exists(pkg_path):
             cmd.append(f"--add-data={pkg_path};{pkg_dir}")
@@ -153,12 +152,22 @@ def main():
         "extraction.excel_extractor",
         "audit",
         "audit.logger",
+        "services",
+        "services.pdf_unlock_service",
+        "services.excel_export_service",
+        "services.page_detection_service",
+        "fitz",
+        "fitz._fitz",
         "config",
     ]
     
     for imp in hidden_imports:
         cmd.append(f"--hidden-import={imp}")
-    
+
+    # PyMuPDF (fitz) ships native DLLs that --hidden-import alone won't collect.
+    # --collect-all ensures the compiled extension and all data files are bundled.
+    cmd.append("--collect-all=fitz")
+
     # Add the main script
     cmd.append(main_script)
     
