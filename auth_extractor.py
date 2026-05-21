@@ -1,4 +1,4 @@
-﻿"""
+"""
 Pace Auth PDF Extractor - Standalone Desktop Tool with OCR
 Extracts Patient Name, Auth #, Date Approved, Date Auth Expire, and Patient ID
 from authorization PDFs (including scanned documents) and exports to Excel.
@@ -21,20 +21,6 @@ from threading import Thread
 def get_current_year():
     """Get current year as integer."""
     return datetime.now().year
-
-def get_likely_year_suffix():
-    """
-    Get the likely 2-digit year suffix for OCR correction.
-    Returns current year's last 2 digits (e.g., 26 for 2026).
-    """
-    return str(get_current_year())[-2:]
-
-def get_likely_full_year():
-    """
-    Get the likely 4-digit year for OCR correction.
-    Returns current year (e.g., 2026).
-    """
-    return str(get_current_year())
 
 # Current and previous year for OCR pattern matching
 # Auth documents may reference current year or previous year
@@ -118,19 +104,6 @@ def preprocess_image_for_ocr(img):
     
     return img
 
-# ML libraries
-# Set USE_ML = True to re-enable the ML model if/when it's retrained with more data
-USE_ML = False
-try:
-    from ml_extractor import MLExtractor
-    ML_AVAILABLE = True and USE_ML
-except ImportError:
-    ML_AVAILABLE = False
-    print("ML module not available. Using regex extraction only.")
-
-# Azure integration is intentionally disabled in this app.
-AZURE_AVAILABLE = False
-
 # --- Centralized configuration (credentials, paths, field list) ---
 # Loaded from config.py which reads .env for secrets
 from config import (
@@ -170,10 +143,6 @@ class PatientNameMatcher:
                 self.patients.append((last, first, name))
         except Exception as e:
             print(f"Error loading patient names: {e}")
-    
-    def reload_names(self):
-        """Reload patient names from file (useful after syncing from Caspio)."""
-        self.load_names()
     
     def normalize(self, s):
         """Normalize a string for comparison."""
@@ -641,62 +610,6 @@ class CaspioAPI:
         
         return len(patient_list)
     
-    def search_records(self, table_name, search_term, search_fields=None, max_results=100):
-        """
-        Search for records in a Caspio table.
-        
-        Args:
-            table_name: Name of the Caspio table (e.g., 'a_Authorizations', 'a_Patient')
-            search_term: The search term to look for
-            search_fields: List of field names to search in (if None, searches common name fields)
-            max_results: Maximum number of results to return
-        
-        Returns:
-            List of matching records as dictionaries
-        """
-        token = self.get_access_token()
-        
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json"
-        }
-        
-        # URL encode the search term
-        import urllib.parse
-        encoded_term = urllib.parse.quote(search_term)
-        
-        # Build WHERE clause for searching
-        if search_fields:
-            # Search in specified fields
-            conditions = [f"{field} LIKE '%{search_term}%'" for field in search_fields]
-            where_clause = " OR ".join(conditions)
-        else:
-            # Default search fields based on table
-            if table_name == "a_Patient":
-                where_clause = f"Box_2__Patient_Last_Name LIKE '%{search_term}%' OR Box_2__Patient_First_Name LIKE '%{search_term}%' OR Concantenated_Patient_Name LIKE '%{search_term}%'"
-            elif table_name == "a_Authorizations":
-                where_clause = f"Last_Name LIKE '%{search_term}%' OR First_Name LIKE '%{search_term}%' OR Auth_Number LIKE '%{search_term}%' OR Patient_ID LIKE '%{search_term}%'"
-            else:
-                # Generic search - will likely fail but try anyway
-                where_clause = f"Name LIKE '%{search_term}%'"
-        
-        # URL encode the WHERE clause
-        encoded_where = urllib.parse.quote(where_clause)
-        
-        url = f"{self.base_url}/tables/{table_name}/records?q.pageSize={max_results}&q.where={encoded_where}"
-        
-        try:
-            response = requests.get(url, headers=headers)
-            
-            if response.status_code != 200:
-                raise Exception(f"Search failed: {response.status_code} - {response.text}")
-            
-            data = response.json()
-            return data.get("Result", [])
-        except Exception as e:
-            print(f"Search error: {e}")
-            return []
-    
     def get_all_records(self, table_name, select_fields=None, max_results=1000):
         """
         Fetch all records from a table (with optional field selection).
@@ -800,110 +713,6 @@ class CaspioAPI:
                 return {"success": False, "message": f"Update failed: {response.status_code} - {response.text}"}
         except Exception as e:
             return {"success": False, "message": f"Update error: {str(e)}"}
-    
-    def delete_record(self, table_name, pk_field, pk_value):
-        """
-        Delete a record from a Caspio table.
-        
-        Args:
-            table_name: Name of the Caspio table
-            pk_field: Name of the primary key field
-            pk_value: Value of the primary key to identify the record
-        
-        Returns:
-            Dict with success status and any error message
-        """
-        import urllib.parse
-        
-        token = self.get_access_token()
-        
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json"
-        }
-        
-        # Build WHERE clause
-        where_clause = f"{pk_field}='{pk_value}'"
-        encoded_where = urllib.parse.quote(where_clause)
-        
-        url = f"{self.base_url}/tables/{table_name}/records?q.where={encoded_where}"
-        
-        try:
-            response = requests.delete(url, headers=headers)
-            
-            if response.status_code in (200, 204):
-                return {"success": True, "message": "Record deleted successfully"}
-            else:
-                return {"success": False, "message": f"Delete failed: {response.status_code} - {response.text}"}
-        except Exception as e:
-            return {"success": False, "message": f"Delete error: {str(e)}"}
-    
-    def search_with_operator(self, table_name, field, operator, value, select_fields=None, max_results=100):
-        """
-        Search for records using a specific operator (like Caspio criteria builder).
-        
-        Args:
-            table_name: Name of the Caspio table
-            field: Field name to search on
-            operator: Operator type - 'equals', 'contains', 'starts_with', 'ends_with', 
-                      'not_equal', 'is_empty', 'is_not_empty', 'greater_than', 'less_than'
-            value: The value to compare against
-            select_fields: Optional list of fields to return
-            max_results: Maximum number of results
-        
-        Returns:
-            List of matching records
-        """
-        import urllib.parse
-        
-        token = self.get_access_token()
-        
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json"
-        }
-        
-        # Build WHERE clause based on operator
-        if operator == 'equals':
-            where_clause = f"{field}='{value}'"
-        elif operator == 'not_equal':
-            where_clause = f"{field}<>'{value}'"
-        elif operator == 'contains':
-            where_clause = f"{field} LIKE '%{value}%'"
-        elif operator == 'starts_with':
-            where_clause = f"{field} LIKE '{value}%'"
-        elif operator == 'ends_with':
-            where_clause = f"{field} LIKE '%{value}'"
-        elif operator == 'is_empty':
-            where_clause = f"({field} IS NULL OR {field}='')"
-        elif operator == 'is_not_empty':
-            where_clause = f"({field} IS NOT NULL AND {field}<>'')"
-        elif operator == 'greater_than':
-            where_clause = f"{field}>'{value}'"
-        elif operator == 'less_than':
-            where_clause = f"{field}<'{value}'"
-        else:
-            # Default to contains
-            where_clause = f"{field} LIKE '%{value}%'"
-        
-        encoded_where = urllib.parse.quote(where_clause)
-        
-        url = f"{self.base_url}/tables/{table_name}/records?q.pageSize={max_results}&q.where={encoded_where}"
-        
-        if select_fields:
-            url += f"&q.select={','.join(select_fields)}"
-        
-        try:
-            response = requests.get(url, headers=headers)
-            
-            if response.status_code != 200:
-                raise Exception(f"Search failed: {response.status_code} - {response.text}")
-            
-            data = response.json()
-            return data.get("Result", [])
-        except Exception as e:
-            print(f"Search error: {e}")
-            return []
     
     def insert_single_record(self, table_name, record):
         """
@@ -1035,34 +844,6 @@ class PDFExtractor:
         if self.tesseract_path and OCR_AVAILABLE:
             pytesseract.pytesseract.tesseract_cmd = self.tesseract_path
         
-        # Azure extraction is disabled; always use local OCR/regex pipeline.
-        self.azure_client = None
-        self.use_azure = False
-        
-        # Initialize ML extractor if available
-        self.ml_extractor = None
-        self.use_ml = False
-        if ML_AVAILABLE:
-            model_path = APP_DIR / "auth_form_ner_model"
-            if model_path.exists():
-                try:
-                    self.ml_extractor = MLExtractor(model_path=str(model_path))
-                    self.use_ml = True
-                    print("ML model loaded. Using hybrid extraction (ML + Regex).")
-                except Exception as e:
-                    print(f"Could not load ML model: {e}. Using regex only.")
-                    self.use_ml = False
-            else:
-                print("ML model not found. Using regex extraction only.")
-                print(f"To use ML, train a model with: python ml_trainer.py --sample --output {model_path}")
-    
-    def extract_with_azure(self, pdf_path):
-        """
-        Legacy Azure extraction hook.
-        Azure is decommissioned for this app, so this always returns None.
-        """
-        return None
-    
     def find_auth_page(self, page_texts):
         """Find the page containing the TREATMENT AUTHORIZATION FORM."""
         # The auth form page MUST have "TREATMENT AUTHORIZATION FORM" header
@@ -2055,32 +1836,10 @@ class PDFExtractor:
         # Get fallback data from filename
         filename_data = self.extract_from_filename(pdf_path.stem)
         
-        # TRY AZURE DOCUMENT INTELLIGENCE FIRST (best quality)
-        if self.use_azure:
-            azure_results = self.extract_with_azure(pdf_path)
-            if azure_results:
-                result["extraction_method"] = "azure"
-                for field in FIELDS:
-                    if field in azure_results and azure_results[field]:
-                        result[field] = azure_results[field]
-                        if f"{field}_confidence" in azure_results:
-                            result[f"{field}_confidence"] = azure_results[f"{field}_confidence"]
-                        if f"{field}_method" in azure_results:
-                            result[f"{field}_method"] = azure_results[f"{field}_method"]
-                
-                # If Azure got all fields, we're done
-                if all(result.get(field) for field in FIELDS):
-                    # Use filename fallback for patient name if needed
-                    if not result["Patient Name"] and filename_data["Patient Name"]:
-                        result["Patient Name"] = filename_data["Patient Name"]
-                        result["Patient Name_method"] = "filename"
-                    return result
-        
-        # FALLBACK TO LOCAL OCR + ML/REGEX
         # Extract text from PDF (finds the auth form page automatically)
         # auth_text = just the auth form page, all_text = all pages combined
         auth_text, all_text, method, page_num = self.extract_text_from_pdf(pdf_path)
-        result["extraction_method"] = method if not self.use_azure else f"azure + {method}"
+        result["extraction_method"] = method
         result["auth_page"] = page_num if page_num > 0 else "all"
         
         # Use auth_text for main extraction (Auth #, dates, name)
@@ -2305,30 +2064,6 @@ class PDFExtractor:
         
         return result
     
-    def process_folder(self, folder_path, progress_callback=None):
-        """Process all PDFs in a folder."""
-        folder = pathlib.Path(folder_path)
-        pdf_files = sorted(folder.glob("*.pdf"))
-        
-        self.results = []
-        total = len(pdf_files)
-        
-        for i, pdf_file in enumerate(pdf_files):
-            try:
-                result = self.process_pdf(pdf_file)
-                self.results.append(result)
-            except Exception as e:
-                self.results.append({
-                    "file": pdf_file.name,
-                    "error": str(e),
-                    "extracted_at": datetime.now().isoformat(),
-                })
-            
-            if progress_callback:
-                progress_callback(i + 1, total, pdf_file.name)
-        
-        return self.results
-
     def process_all_files(self, folder_path, progress_callback=None):
         """Process all supported files in a folder (PDF, CSV, XLSX, PNG, JPG).
 
@@ -2961,12 +2696,6 @@ class AuthExtractorApp:
         self.finder_duplicate_imports = []  # Duplicate names from import
         self.finder_original_count = 0  # Original count before dedup
 
-        # Search tab variables
-        self.search_auth_term_var = tk.StringVar()  # Authorization search term
-        self.search_patient_term_var = tk.StringVar()  # Patient search term
-        self.search_auths_results = []  # Authorization search results
-        self.search_patients_results = []  # Patient search results
-        
         # In-app results storage for inline editing
         self.current_results_df = None  # DataFrame of formatted results
         self.results_columns = []  # Column names for results table
@@ -3070,52 +2799,34 @@ class AuthExtractorApp:
         right_frame = ttk.Frame(header_frame)
         right_frame.pack(side=tk.RIGHT)
         
-        self.radar_status_label = tk.Label(right_frame, text="● ONLINE",
-                                           font=('Segoe UI', 8, 'bold'),
-                                           bg=self.colors['bg'], fg='#22C55E')
-        self.radar_status_label.pack(side=tk.LEFT, padx=(0, 12))
-        
-        back_btn = ttk.Button(right_frame, text="← Change Payer", 
+        back_btn = ttk.Button(right_frame, text="← Change Payer",
                               command=self.return_to_landing)
         back_btn.pack(side=tk.LEFT)
         
-        # Create notebook for tabs
-        self.notebook = ttk.Notebook(self.root)
-        self.notebook.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 20))
-        
-        # ===== MAIN TAB 1: Auth Management =====
-        self.auth_management_tab = ttk.Frame(self.notebook)
-        self.notebook.add(self.auth_management_tab, text="   Auth Management   ")
-        
-        # Create nested notebook inside Auth Management
-        self.auth_notebook = ttk.Notebook(self.auth_management_tab, style='Sub.TNotebook')
-        self.auth_notebook.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-        
-        # Sub-Tab 1: File Finder
+        # Tabs — numbered workflow steps, directly on root
+        self.auth_notebook = ttk.Notebook(self.root)
+        self.auth_notebook.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 20))
+
+        # Tab 1: Find Auth PDFs
         self.finder_tab = ttk.Frame(self.auth_notebook)
         self.auth_notebook.add(self.finder_tab, text="  1. Find Auth PDFs  ")
         self.setup_finder_tab()
-        
-        # Sub-Tab 2: Extract PDFs
+
+        # Tab 2: Extract Data
         self.extractor_tab = ttk.Frame(self.auth_notebook)
-        self.auth_notebook.add(self.extractor_tab, text="  2. Download PDFs  ")
+        self.auth_notebook.add(self.extractor_tab, text="  2. Extract Data  ")
         self.setup_extractor_tab()
-        
-        # Sub-Tab 3: Review & Edit
+
+        # Tab 3: Review & Edit
         self.review_tab = ttk.Frame(self.auth_notebook)
-        self.auth_notebook.add(self.review_tab, text="   Review & Edit   ")
+        self.auth_notebook.add(self.review_tab, text="  3. Review & Edit  ")
         self.setup_review_tab()
 
-        # Sub-Tab 4: Email
+        # Tab 4: Email
         self.email_tab = ttk.Frame(self.auth_notebook)
-        self.auth_notebook.add(self.email_tab, text="   Email   ")
+        self.auth_notebook.add(self.email_tab, text="  4. Email  ")
         self.setup_email_tab()
 
-        # ===== MAIN TAB 2: Search =====
-        self.search_tab = ttk.Frame(self.notebook)
-        self.notebook.add(self.search_tab, text="   Search   ")
-        self.setup_search_tab()
-    
     def apply_theme(self):
         """Apply modern dark theme styling to the application."""
         style = ttk.Style()
@@ -3137,18 +2848,6 @@ class AuthExtractorApp:
             background=[('selected', c['accent'])],
             foreground=[('selected', '#ffffff')],
             padding=[('selected', [40, 14])])
-        
-        # Sub-notebook tabs - smaller, nested look
-        style.configure('Sub.TNotebook', background=c['bg'], borderwidth=0, tabmargins=[0, 0, 0, 0])
-        style.configure('Sub.TNotebook.Tab',
-            background=c['panel'],
-            foreground=c['text_light'],
-            padding=[20, 8],
-            font=('Segoe UI', 9))
-        style.map('Sub.TNotebook.Tab',
-            background=[('selected', c['accent_blue'])],
-            foreground=[('selected', '#ffffff')],
-            padding=[('selected', [20, 8])])
         
         # Frames - dark background
         style.configure('TFrame', background=c['bg'])
@@ -3370,17 +3069,17 @@ class AuthExtractorApp:
                                       command=self.start_extraction, style='Action.TButton')
         self.extract_btn.pack(side=tk.LEFT, padx=5)
 
-        self.test_btn = ttk.Button(button_frame, text="🔍 Test Single PDF",
-                                   command=self.test_single_pdf)
-        self.test_btn.pack(side=tk.LEFT, padx=5)
+        self.goto_review_btn = ttk.Button(button_frame, text="📋 Go to Review",
+                                          command=lambda: self.auth_notebook.select(self.review_tab))
+        self.goto_review_btn.pack(side=tk.LEFT, padx=5)
 
         self.sync_btn = ttk.Button(button_frame, text="🔄 Sync Patient Names",
                                    command=self.sync_patient_names_from_caspio)
         self.sync_btn.pack(side=tk.LEFT, padx=5)
 
-        self.goto_review_btn = ttk.Button(button_frame, text="📋 Go to Review Tab",
-                                          command=lambda: self.auth_notebook.select(self.review_tab))
-        self.goto_review_btn.pack(side=tk.LEFT, padx=5)
+        self.test_btn = ttk.Button(button_frame, text="🔍 Test Single PDF",
+                                   command=self.test_single_pdf)
+        self.test_btn.pack(side=tk.LEFT, padx=5)
         
         # Progress section — expands to fill remaining space between steps and buttons
         progress_frame = ttk.LabelFrame(main_frame, text="Progress & Log", padding="10")
@@ -3751,44 +3450,32 @@ class AuthExtractorApp:
         # === BOTTOM BUTTON BAR ===
         button_frame = ttk.Frame(main_frame)
         button_frame.pack(fill=tk.X, pady=(4, 4))
-        
-        self.refresh_review_btn = ttk.Button(button_frame, text="🔄 Refresh", 
-                                              command=self.refresh_review_from_excel)
-        self.refresh_review_btn.pack(side=tk.LEFT, padx=2)
-        
-        self.open_btn = ttk.Button(button_frame, text="📂 Open File", 
-                                   command=self.open_output)
-        self.open_btn.pack(side=tk.LEFT, padx=2)
-        
-        self.caspio_btn = ttk.Button(button_frame, text="☁️ Upload All to Caspio", 
-                                     command=lambda: self.show_caspio_upload_dialog(valid_only=False), 
-                                     style='Action.TButton')
-        self.caspio_btn.pack(side=tk.LEFT, padx=2)
-        
-        self.caspio_valid_btn = ttk.Button(button_frame, text="✅ Upload Valid Only", 
-                                            command=lambda: self.show_caspio_upload_dialog(valid_only=True))
+
+        self.caspio_valid_btn = ttk.Button(button_frame, text="☁️ Upload Valid to Caspio",
+                                            command=lambda: self.show_caspio_upload_dialog(valid_only=True),
+                                            style='Action.TButton')
         self.caspio_valid_btn.pack(side=tk.LEFT, padx=2)
+
+        self.caspio_btn = ttk.Button(button_frame, text="Upload All",
+                                     command=lambda: self.show_caspio_upload_dialog(valid_only=False))
+        self.caspio_btn.pack(side=tk.LEFT, padx=2)
 
         self.view_errors_btn = ttk.Button(button_frame, text="⚠️ View Errors",
                                            command=self.show_errors_popup)
         self.view_errors_btn.pack(side=tk.LEFT, padx=2)
-        
-        # Valid count indicator and legend on same row
+
+        self.refresh_review_btn = ttk.Button(button_frame, text="🔄 Refresh",
+                                              command=self.refresh_review_from_excel)
+        self.refresh_review_btn.pack(side=tk.LEFT, padx=2)
+
+        self.open_btn = ttk.Button(button_frame, text="📂 Open File",
+                                   command=self.open_output)
+        self.open_btn.pack(side=tk.LEFT, padx=2)
+
+        # Valid count indicator
         self.valid_count_var = tk.StringVar(value="")
-        ttk.Label(button_frame, textvariable=self.valid_count_var, 
+        ttk.Label(button_frame, textvariable=self.valid_count_var,
                   font=("Segoe UI", 9), foreground="#4CAF50").pack(side=tk.LEFT, padx=(10, 5))
-        
-        tk.Label(button_frame, text="  ", bg="#5c2828", width=2).pack(side=tk.LEFT, padx=(5, 2))
-        ttk.Label(button_frame, text="= Expired", 
-                  font=("Segoe UI", 8)).pack(side=tk.LEFT)
-
-        tk.Label(button_frame, text="  ", bg="#2D2B1E", width=2).pack(side=tk.LEFT, padx=(8, 2))
-        ttk.Label(button_frame, text="= OCR", 
-                  font=("Segoe UI", 8)).pack(side=tk.LEFT)
-
-        tk.Label(button_frame, text="  ", bg="#1E2D3B", width=2).pack(side=tk.LEFT, padx=(8, 2))
-        ttk.Label(button_frame, text="= Structured", 
-                  font=("Segoe UI", 8)).pack(side=tk.LEFT)
 
     def show_errors_popup(self):
         """Show extraction errors in a popup window."""
@@ -4336,11 +4023,7 @@ class AuthExtractorApp:
         bulk_btn = ttk.Button(entry_frame, text="📋 Bulk Import", command=self.bulk_import_finder)
         bulk_btn.pack(side=tk.LEFT, padx=5)
         
-        # Auth type legend
-        legend = ttk.Label(entry_frame, 
-            text="Unskilled=Unskilled/Escort Assistance | Skilled=Skilled",
-            font=("Segoe UI", 8), foreground="gray")
-        legend.pack(side=tk.RIGHT)
+
         
         # Table (Treeview) for criteria
         table_frame = ttk.Frame(self.search_criteria_frame)
@@ -4692,7 +4375,7 @@ class AuthExtractorApp:
             # Suggest output file name
             output_file = pathlib.Path(dest) / "Auth_Results_Combined.xlsx"
             self.output_file.set(str(output_file))
-        self.notebook.select(self.extractor_tab)
+        self.auth_notebook.select(self.extractor_tab)
     
     def populate_finder_results(self):
         """Populate the finder results view with current finder data."""
@@ -5539,883 +5222,6 @@ PACE Authorization Team""")
         self.queue_count_var.set(f"{queue_count} items in queue")
         self.invalid_count_var.set(f"{invalid_count} patients")
 
-    def setup_search_tab(self):
-        """Set up the Search tab UI for searching Authorizations and Patients side by side."""
-        main_frame = ttk.Frame(self.search_tab, padding="15")
-        main_frame.pack(fill=tk.BOTH, expand=True)
-        
-        # Description
-        desc_label = ttk.Label(
-            main_frame,
-            text="Search Caspio tables to find patient profiles and existing authorizations",
-            style='Desc.TLabel'
-        )
-        desc_label.pack(anchor=tk.W, pady=(0, 10))
-        
-        # Create paned window for side-by-side panels
-        paned = ttk.PanedWindow(main_frame, orient=tk.HORIZONTAL)
-        paned.pack(fill=tk.BOTH, expand=True, pady=5)
-        
-        # === LEFT SIDE: Authorizations Panel ===
-        auth_frame = ttk.LabelFrame(paned, text="Authorizations (a_Authorizations)", padding="10")
-        paned.add(auth_frame, weight=1)
-        
-        # Auth filter controls
-        auth_filter_frame = ttk.Frame(auth_frame)
-        auth_filter_frame.pack(fill=tk.X, pady=(0, 8))
-        
-        # Row 1: Field and Operator
-        auth_filter_row1 = ttk.Frame(auth_filter_frame)
-        auth_filter_row1.pack(fill=tk.X, pady=(0, 5))
-        
-        ttk.Label(auth_filter_row1, text="Field:", font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=(0, 5))
-        
-        # Field names must match actual Caspio a_Authorizations table columns
-        self.auth_search_field_var = tk.StringVar(value="Last_Name")
-        auth_field_options = ["Last_Name", "a_First_Name_", "Patient_ID", "Authorization_", "Auth_Start_Date", "Auth_Expire_Date"]
-        self.auth_field_combo = ttk.Combobox(auth_filter_row1, textvariable=self.auth_search_field_var, 
-                                              values=auth_field_options, state="readonly", width=18)
-        self.auth_field_combo.pack(side=tk.LEFT, padx=(0, 10))
-        
-        ttk.Label(auth_filter_row1, text="Operator:", font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=(0, 5))
-        
-        self.auth_operator_var = tk.StringVar(value="Contains")
-        operator_options = ["Equals", "Contains", "Starts With", "Ends With", "Not Equal", "Is Empty", "Is Not Empty"]
-        self.auth_operator_combo = ttk.Combobox(auth_filter_row1, textvariable=self.auth_operator_var, 
-                                                 values=operator_options, state="readonly", width=12)
-        self.auth_operator_combo.pack(side=tk.LEFT)
-        self.auth_operator_combo.bind("<<ComboboxSelected>>", self.on_auth_operator_change)
-        
-        # Row 2: Value and Search button
-        auth_filter_row2 = ttk.Frame(auth_filter_frame)
-        auth_filter_row2.pack(fill=tk.X)
-        
-        ttk.Label(auth_filter_row2, text="Value:", font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=(0, 5))
-        
-        self.search_auth_entry = ttk.Entry(auth_filter_row2, textvariable=self.search_auth_term_var, width=20)
-        self.search_auth_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
-        self.search_auth_entry.bind("<Return>", lambda e: self.run_auth_search())
-        
-        self.search_auth_btn = ttk.Button(
-            auth_filter_row2, 
-            text="🔍 Search", 
-            command=self.run_auth_search,
-            style='Action.TButton'
-        )
-        self.search_auth_btn.pack(side=tk.LEFT, padx=(0, 3))
-        
-        self.clear_auth_btn = ttk.Button(
-            auth_filter_row2, 
-            text="Clear", 
-            command=self.clear_auth_search,
-            width=5
-        )
-        self.clear_auth_btn.pack(side=tk.LEFT)
-        
-        # Authorizations treeview
-        auth_container = ttk.Frame(auth_frame)
-        auth_container.pack(fill=tk.BOTH, expand=True)
-        
-        # Define columns for authorizations - must match actual Caspio field names
-        self.search_auth_columns = [
-            "Last_Name", "a_First_Name_", "Patient_ID", "Authorization_", 
-            "Auth_Start_Date", "Auth_Expire_Date"
-        ]
-        self.search_auth_pk = "Authorization_ID"  # Primary key field for auth table
-        
-        # Display name mapping for friendlier column headers
-        self.auth_display_names = {
-            "Last_Name": "Last Name",
-            "a_First_Name_": "First Name",
-            "Patient_ID": "Patient ID",
-            "Authorization_": "Auth #",
-            "Auth_Start_Date": "Date Approved",
-            "Auth_Expire_Date": "Date Expired"
-        }
-        
-        self.search_auth_tree = ttk.Treeview(
-            auth_container, 
-            columns=self.search_auth_columns, 
-            show="headings", 
-            height=12
-        )
-        
-        # Configure authorization columns
-        auth_col_widths = {
-            "Last_Name": 100, "a_First_Name_": 90, "Patient_ID": 80, 
-            "Authorization_": 95, "Auth_Start_Date": 95, "Auth_Expire_Date": 105
-        }
-        for col in self.search_auth_columns:
-            display_name = self.auth_display_names.get(col, col.replace("_", " "))
-            self.search_auth_tree.heading(col, text=display_name)
-            self.search_auth_tree.column(col, width=auth_col_widths.get(col, 80), anchor=tk.W)
-        
-        # Scrollbars for auth tree
-        auth_scroll_y = ttk.Scrollbar(auth_container, orient=tk.VERTICAL, command=self.search_auth_tree.yview)
-        auth_scroll_x = ttk.Scrollbar(auth_container, orient=tk.HORIZONTAL, command=self.search_auth_tree.xview)
-        self.search_auth_tree.configure(yscrollcommand=auth_scroll_y.set, xscrollcommand=auth_scroll_x.set)
-        
-        self.search_auth_tree.grid(row=0, column=0, sticky="nsew")
-        auth_scroll_y.grid(row=0, column=1, sticky="ns")
-        auth_scroll_x.grid(row=1, column=0, sticky="ew")
-        
-        auth_container.grid_rowconfigure(0, weight=1)
-        auth_container.grid_columnconfigure(0, weight=1)
-        
-        # Double-click to edit
-        self.search_auth_tree.bind("<Double-1>", lambda e: self.edit_auth_record())
-        
-        # Auth bottom controls: Count and Action buttons
-        auth_bottom = ttk.Frame(auth_frame)
-        auth_bottom.pack(fill=tk.X, pady=(5, 0))
-        
-        self.search_auth_count_var = tk.StringVar(value="0 authorizations found")
-        ttk.Label(auth_bottom, textvariable=self.search_auth_count_var, 
-                  font=("Segoe UI", 9, "italic")).pack(side=tk.LEFT)
-        
-        # Action buttons
-        auth_btn_frame = ttk.Frame(auth_bottom)
-        auth_btn_frame.pack(side=tk.RIGHT)
-        
-        ttk.Button(auth_btn_frame, text="➕ Add", command=self.add_auth_record, width=7).pack(side=tk.LEFT, padx=2)
-        ttk.Button(auth_btn_frame, text="✏️ Edit", command=self.edit_auth_record, width=7).pack(side=tk.LEFT, padx=2)
-        ttk.Button(auth_btn_frame, text="🗑️ Delete", command=self.delete_auth_record, width=8).pack(side=tk.LEFT, padx=2)
-        
-        # === RIGHT SIDE: Patients Panel ===
-        patient_frame = ttk.LabelFrame(paned, text="Patients (a_Patient)", padding="10")
-        paned.add(patient_frame, weight=1)
-        
-        # Patient filter controls
-        patient_filter_frame = ttk.Frame(patient_frame)
-        patient_filter_frame.pack(fill=tk.X, pady=(0, 8))
-        
-        # Row 1: Field and Operator
-        patient_filter_row1 = ttk.Frame(patient_filter_frame)
-        patient_filter_row1.pack(fill=tk.X, pady=(0, 5))
-        
-        ttk.Label(patient_filter_row1, text="Field:", font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=(0, 5))
-        
-        self.patient_search_field_var = tk.StringVar(value="Box_2__Patient_Last_Name")
-        patient_field_options = ["Box_2__Patient_Last_Name", "Box_2__Patient_First_Name", "Concantenated_Patient_Name", "Patient_ID"]
-        self.patient_field_combo = ttk.Combobox(patient_filter_row1, textvariable=self.patient_search_field_var, 
-                                                 values=patient_field_options, state="readonly", width=22)
-        self.patient_field_combo.pack(side=tk.LEFT, padx=(0, 10))
-        
-        ttk.Label(patient_filter_row1, text="Operator:", font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=(0, 5))
-        
-        self.patient_operator_var = tk.StringVar(value="Contains")
-        self.patient_operator_combo = ttk.Combobox(patient_filter_row1, textvariable=self.patient_operator_var, 
-                                                    values=operator_options, state="readonly", width=12)
-        self.patient_operator_combo.pack(side=tk.LEFT)
-        self.patient_operator_combo.bind("<<ComboboxSelected>>", self.on_patient_operator_change)
-        
-        # Row 2: Value and Search button
-        patient_filter_row2 = ttk.Frame(patient_filter_frame)
-        patient_filter_row2.pack(fill=tk.X)
-        
-        ttk.Label(patient_filter_row2, text="Value:", font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=(0, 5))
-        
-        self.search_patient_entry = ttk.Entry(patient_filter_row2, textvariable=self.search_patient_term_var, width=20)
-        self.search_patient_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
-        self.search_patient_entry.bind("<Return>", lambda e: self.run_patient_search())
-        
-        self.search_patient_btn = ttk.Button(
-            patient_filter_row2, 
-            text="🔍 Search", 
-            command=self.run_patient_search,
-            style='Action.TButton'
-        )
-        self.search_patient_btn.pack(side=tk.LEFT, padx=(0, 3))
-        
-        self.clear_patient_btn = ttk.Button(
-            patient_filter_row2, 
-            text="Clear", 
-            command=self.clear_patient_search,
-            width=5
-        )
-        self.clear_patient_btn.pack(side=tk.LEFT)
-        
-        # Patients treeview
-        patient_container = ttk.Frame(patient_frame)
-        patient_container.pack(fill=tk.BOTH, expand=True)
-        
-        # Define columns for patients - display columns
-        self.search_patient_columns = [
-            "Box_2__Patient_Last_Name", "Box_2__Patient_First_Name", 
-            "Concantenated_Patient_Name", "Patient_ID"
-        ]
-        self.search_patient_pk = "Patient_ID"  # Primary key field for patient table
-        
-        self.search_patient_tree = ttk.Treeview(
-            patient_container, 
-            columns=self.search_patient_columns, 
-            show="headings", 
-            height=12
-        )
-        
-        # Configure patient columns with friendlier display names
-        patient_display_names = {
-            "Box_2__Patient_Last_Name": "Last Name",
-            "Box_2__Patient_First_Name": "First Name",
-            "Concantenated_Patient_Name": "Full Name",
-            "Patient_ID": "Patient ID"
-        }
-        patient_col_widths = {
-            "Box_2__Patient_Last_Name": 110, "Box_2__Patient_First_Name": 100,
-            "Concantenated_Patient_Name": 180, "Patient_ID": 90
-        }
-        for col in self.search_patient_columns:
-            display_name = patient_display_names.get(col, col.replace("_", " "))
-            self.search_patient_tree.heading(col, text=display_name)
-            self.search_patient_tree.column(col, width=patient_col_widths.get(col, 100), anchor=tk.W)
-        
-        # Scrollbars for patient tree
-        patient_scroll_y = ttk.Scrollbar(patient_container, orient=tk.VERTICAL, command=self.search_patient_tree.yview)
-        patient_scroll_x = ttk.Scrollbar(patient_container, orient=tk.HORIZONTAL, command=self.search_patient_tree.xview)
-        self.search_patient_tree.configure(yscrollcommand=patient_scroll_y.set, xscrollcommand=patient_scroll_x.set)
-        
-        self.search_patient_tree.grid(row=0, column=0, sticky="nsew")
-        patient_scroll_y.grid(row=0, column=1, sticky="ns")
-        patient_scroll_x.grid(row=1, column=0, sticky="ew")
-        
-        patient_container.grid_rowconfigure(0, weight=1)
-        patient_container.grid_columnconfigure(0, weight=1)
-        
-        # Double-click to edit
-        self.search_patient_tree.bind("<Double-1>", lambda e: self.edit_patient_record())
-        
-        # Patient bottom controls: Count and Action buttons
-        patient_bottom = ttk.Frame(patient_frame)
-        patient_bottom.pack(fill=tk.X, pady=(5, 0))
-        
-        self.search_patient_count_var = tk.StringVar(value="0 patients found")
-        ttk.Label(patient_bottom, textvariable=self.search_patient_count_var, 
-                  font=("Segoe UI", 9, "italic")).pack(side=tk.LEFT)
-        
-        # Action buttons
-        patient_btn_frame = ttk.Frame(patient_bottom)
-        patient_btn_frame.pack(side=tk.RIGHT)
-        
-        ttk.Button(patient_btn_frame, text="➕ Add", command=self.add_patient_record, width=7).pack(side=tk.LEFT, padx=2)
-        ttk.Button(patient_btn_frame, text="✏️ Edit", command=self.edit_patient_record, width=7).pack(side=tk.LEFT, padx=2)
-        ttk.Button(patient_btn_frame, text="🗑️ Delete", command=self.delete_patient_record, width=8).pack(side=tk.LEFT, padx=2)
-        
-        # Status bar at bottom
-        self.search_status_var = tk.StringVar(value="Select a field, operator, and enter a value to search")
-        status_bar = ttk.Label(main_frame, textvariable=self.search_status_var, relief=tk.SUNKEN, anchor=tk.W)
-        status_bar.pack(fill=tk.X, pady=(5, 0))
-    
-    def on_auth_operator_change(self, event=None):
-        """Handle operator change for auth search - disable value entry for Is Empty/Is Not Empty."""
-        op = self.auth_operator_var.get()
-        if op in ("Is Empty", "Is Not Empty"):
-            self.search_auth_entry.configure(state='disabled')
-            self.search_auth_term_var.set("")
-        else:
-            self.search_auth_entry.configure(state='normal')
-    
-    def on_patient_operator_change(self, event=None):
-        """Handle operator change for patient search - disable value entry for Is Empty/Is Not Empty."""
-        op = self.patient_operator_var.get()
-        if op in ("Is Empty", "Is Not Empty"):
-            self.search_patient_entry.configure(state='disabled')
-            self.search_patient_term_var.set("")
-        else:
-            self.search_patient_entry.configure(state='normal')
-    
-    def _operator_to_api(self, operator):
-        """Convert UI operator name to API operator string."""
-        mapping = {
-            "Equals": "equals",
-            "Contains": "contains",
-            "Starts With": "starts_with",
-            "Ends With": "ends_with",
-            "Not Equal": "not_equal",
-            "Is Empty": "is_empty",
-            "Is Not Empty": "is_not_empty"
-        }
-        return mapping.get(operator, "contains")
-    
-    def run_auth_search(self):
-        """Execute search against the Authorizations table using selected field and operator."""
-        field = self.auth_search_field_var.get()
-        operator = self.auth_operator_var.get()
-        value = self.search_auth_term_var.get().strip()
-        
-        # For Is Empty / Is Not Empty, value is not needed
-        if operator not in ("Is Empty", "Is Not Empty"):
-            if not value:
-                messagebox.showwarning("Warning", "Please enter a search value")
-                return
-            if len(value) < 2:
-                messagebox.showwarning("Warning", "Please enter at least 2 characters")
-                return
-        
-        self.search_status_var.set(f"Searching authorizations: {field} {operator} '{value}'...")
-        self.search_auth_btn.configure(state='disabled')
-        self.root.update_idletasks()
-        
-        api_operator = self._operator_to_api(operator)
-        
-        def search_thread():
-            try:
-                caspio = CaspioAPI()
-                # Include PK_ID in select so we can edit/delete
-                select_fields = [self.search_auth_pk] + self.search_auth_columns
-                auth_results = caspio.search_with_operator(
-                    "a_Authorizations",
-                    field,
-                    api_operator,
-                    value,
-                    select_fields=select_fields
-                )
-                self.root.after(0, lambda: self.update_auth_results(auth_results))
-            except Exception as e:
-                self.root.after(0, lambda: self.auth_search_error(str(e)))
-        
-        Thread(target=search_thread, daemon=True).start()
-    
-    def run_patient_search(self):
-        """Execute search against the Patient table using selected field and operator."""
-        field = self.patient_search_field_var.get()
-        operator = self.patient_operator_var.get()
-        value = self.search_patient_term_var.get().strip()
-        
-        # For Is Empty / Is Not Empty, value is not needed
-        if operator not in ("Is Empty", "Is Not Empty"):
-            if not value:
-                messagebox.showwarning("Warning", "Please enter a search value")
-                return
-            if len(value) < 2:
-                messagebox.showwarning("Warning", "Please enter at least 2 characters")
-                return
-        
-        self.search_status_var.set(f"Searching patients: {field} {operator} '{value}'...")
-        self.search_patient_btn.configure(state='disabled')
-        self.root.update_idletasks()
-        
-        api_operator = self._operator_to_api(operator)
-        
-        def search_thread():
-            try:
-                caspio = CaspioAPI()
-                # Include PK_ID in select so we can edit/delete
-                select_fields = [self.search_patient_pk] + self.search_patient_columns
-                patient_results = caspio.search_with_operator(
-                    "a_Patient",
-                    field,
-                    api_operator,
-                    value,
-                    select_fields=select_fields
-                )
-                self.root.after(0, lambda: self.update_patient_results(patient_results))
-            except Exception as e:
-                self.root.after(0, lambda: self.patient_search_error(str(e)))
-        
-        Thread(target=search_thread, daemon=True).start()
-    
-    def update_auth_results(self, auth_results):
-        """Update the authorization search results treeview."""
-        # Clear existing results
-        for item in self.search_auth_tree.get_children():
-            self.search_auth_tree.delete(item)
-        
-        # Populate authorizations
-        self.search_auths_results = auth_results
-        for record in auth_results:
-            values = [record.get(col, "") or "" for col in self.search_auth_columns]
-            self.search_auth_tree.insert("", tk.END, values=values)
-        
-        # Update count
-        self.search_auth_count_var.set(f"{len(auth_results)} authorization(s) found")
-        self.search_status_var.set(f"Authorization search complete: {len(auth_results)} found")
-        self.search_auth_btn.configure(state='normal')
-    
-    def update_patient_results(self, patient_results):
-        """Update the patient search results treeview."""
-        # Clear existing results
-        for item in self.search_patient_tree.get_children():
-            self.search_patient_tree.delete(item)
-        
-        # Populate patients
-        self.search_patients_results = patient_results
-        for record in patient_results:
-            values = [record.get(col, "") or "" for col in self.search_patient_columns]
-            self.search_patient_tree.insert("", tk.END, values=values)
-        
-        # Update count
-        self.search_patient_count_var.set(f"{len(patient_results)} patient(s) found")
-        self.search_status_var.set(f"Patient search complete: {len(patient_results)} found")
-        self.search_patient_btn.configure(state='normal')
-    
-    def auth_search_error(self, error_msg):
-        """Handle authorization search errors."""
-        self.search_status_var.set(f"Auth search error: {error_msg}")
-        self.search_auth_btn.configure(state='normal')
-        messagebox.showerror("Search Error", f"Failed to search authorizations:\n\n{error_msg}")
-    
-    def patient_search_error(self, error_msg):
-        """Handle patient search errors."""
-        self.search_status_var.set(f"Patient search error: {error_msg}")
-        self.search_patient_btn.configure(state='normal')
-        messagebox.showerror("Search Error", f"Failed to search patients:\n\n{error_msg}")
-    
-    def clear_auth_search(self):
-        """Clear authorization search results."""
-        self.search_auth_term_var.set("")
-        for item in self.search_auth_tree.get_children():
-            self.search_auth_tree.delete(item)
-        self.search_auths_results = []
-        self.search_auth_count_var.set("0 authorizations found")
-        self.search_status_var.set("Authorization results cleared")
-    
-    def clear_patient_search(self):
-        """Clear patient search results."""
-        self.search_patient_term_var.set("")
-        for item in self.search_patient_tree.get_children():
-            self.search_patient_tree.delete(item)
-        self.search_patients_results = []
-        self.search_patient_count_var.set("0 patients found")
-        self.search_status_var.set("Patient results cleared")
-    
-    # ===== Edit/Add/Delete Record Functions =====
-    
-    def _get_selected_auth_record(self):
-        """Get the selected authorization record and its index."""
-        selection = self.search_auth_tree.selection()
-        if not selection:
-            return None, None
-        
-        item = selection[0]
-        idx = self.search_auth_tree.index(item)
-        if idx < len(self.search_auths_results):
-            return self.search_auths_results[idx], idx
-        return None, None
-    
-    def _get_selected_patient_record(self):
-        """Get the selected patient record and its index."""
-        selection = self.search_patient_tree.selection()
-        if not selection:
-            return None, None
-        
-        item = selection[0]
-        idx = self.search_patient_tree.index(item)
-        if idx < len(self.search_patients_results):
-            return self.search_patients_results[idx], idx
-        return None, None
-    
-    def edit_auth_record(self):
-        """Edit the selected authorization record."""
-        record, idx = self._get_selected_auth_record()
-        if not record:
-            messagebox.showwarning("Warning", "Please select an authorization to edit")
-            return
-        
-        pk_value = record.get(self.search_auth_pk)
-        if not pk_value:
-            messagebox.showerror("Error", "Cannot edit: record has no primary key")
-            return
-        
-        # Show edit dialog - pass None for fields to fetch all from schema
-        self._show_edit_dialog(
-            "Edit Authorization",
-            "a_Authorizations",
-            self.search_auth_pk,
-            pk_value,
-            record,
-            None,  # Will fetch all fields from table schema
-            self.run_auth_search  # Refresh callback
-        )
-    
-    def edit_patient_record(self):
-        """Edit the selected patient record."""
-        record, idx = self._get_selected_patient_record()
-        if not record:
-            messagebox.showwarning("Warning", "Please select a patient to edit")
-            return
-        
-        pk_value = record.get(self.search_patient_pk)
-        if not pk_value:
-            messagebox.showerror("Error", "Cannot edit: record has no primary key")
-            return
-        
-        # Show edit dialog - pass None for fields to fetch all from schema
-        self._show_edit_dialog(
-            "Edit Patient",
-            "a_Patient",
-            self.search_patient_pk,
-            pk_value,
-            record,
-            None,  # Will fetch all fields from table schema
-            self.run_patient_search  # Refresh callback
-        )
-    
-    def _show_edit_dialog(self, title, table_name, pk_field, pk_value, record, fields, refresh_callback):
-        """Show a dialog to edit a record. If fields is None, fetches all fields from table schema."""
-        dialog = tk.Toplevel(self.root)
-        dialog.title(title)
-        dialog.transient(self.root)
-        dialog.grab_set()
-        
-        # Center dialog - larger to accommodate all fields
-        dialog.geometry("600x600")
-        dialog.resizable(True, True)
-        
-        # Apply dark theme
-        dialog.configure(bg='#1a1d21')
-        
-        # Fetch all fields from table schema if not provided
-        if fields is None:
-            try:
-                caspio = CaspioAPI()
-                schema = caspio.get_table_schema(table_name)
-                fields = [f["name"] for f in schema]
-                readonly_fields = {f["name"] for f in schema if f.get("readonly", False)}
-            except Exception as e:
-                messagebox.showerror("Error", f"Failed to fetch table schema:\n{e}")
-                dialog.destroy()
-                return
-        else:
-            readonly_fields = set()
-        
-        # We also need the full record data - fetch it if we only have display columns
-        if record and pk_value:
-            try:
-                caspio = CaspioAPI()
-                # Fetch the full record
-                import urllib.parse
-                where_clause = f"{pk_field}='{pk_value}'"
-                encoded_where = urllib.parse.quote(where_clause)
-                url = f"{caspio.base_url}/tables/{table_name}/records?q.where={encoded_where}"
-                headers = {
-                    "Authorization": f"Bearer {caspio.get_access_token()}",
-                    "Content-Type": "application/json"
-                }
-                response = requests.get(url, headers=headers)
-                if response.status_code == 200:
-                    data = response.json()
-                    results = data.get("Result", [])
-                    if results:
-                        record = results[0]  # Use the full record
-            except Exception as e:
-                pass  # Continue with partial record
-        
-        # Create scrollable frame for fields
-        canvas = tk.Canvas(dialog, bg='#1a1d21', highlightthickness=0)
-        scrollbar = ttk.Scrollbar(dialog, orient="vertical", command=canvas.yview)
-        scrollable_frame = ttk.Frame(canvas)
-        
-        scrollable_frame.bind(
-            "<Configure>",
-            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
-        )
-        
-        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
-        canvas.configure(yscrollcommand=scrollbar.set)
-        
-        canvas.pack(side="left", fill="both", expand=True, padx=10, pady=10)
-        scrollbar.pack(side="right", fill="y")
-        
-        # Enable mousewheel scrolling
-        def _on_mousewheel(event):
-            canvas.yview_scroll(int(-1*(event.delta/120)), "units")
-        canvas.bind_all("<MouseWheel>", _on_mousewheel)
-        
-        # Entry variables
-        entries = {}
-        
-        for i, field in enumerate(fields):
-            frame = ttk.Frame(scrollable_frame)
-            frame.pack(fill=tk.X, pady=3, padx=5)
-            
-            # Display friendly field name
-            display_name = field.replace("_", " ").replace("Box 2  Patient", "").strip()
-            is_readonly = field in readonly_fields or field == pk_field
-            
-            label_text = f"{display_name}:" + (" (read-only)" if is_readonly else "")
-            ttk.Label(frame, text=label_text, width=28, anchor='e').pack(side=tk.LEFT, padx=(0, 10))
-            
-            var = tk.StringVar(value=str(record.get(field, "") or ""))
-            entry = ttk.Entry(frame, textvariable=var, width=45)
-            entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
-            
-            if is_readonly:
-                entry.configure(state='disabled')
-            else:
-                entries[field] = var
-        
-        # Unbind mousewheel when dialog closes
-        def on_close():
-            canvas.unbind_all("<MouseWheel>")
-            dialog.destroy()
-        
-        dialog.protocol("WM_DELETE_WINDOW", on_close)
-        
-        # Buttons frame
-        btn_frame = ttk.Frame(dialog)
-        btn_frame.pack(fill=tk.X, pady=10, padx=10)
-        
-        def save_changes():
-            # Collect updated values
-            updates = {}
-            for field, var in entries.items():
-                new_val = var.get().strip()
-                old_val = str(record.get(field, "") or "")
-                if new_val != old_val:
-                    updates[field] = new_val
-            
-            if not updates:
-                messagebox.showinfo("Info", "No changes to save")
-                on_close()
-                return
-            
-            # Update in Caspio
-            self.search_status_var.set("Saving changes to Caspio...")
-            dialog.update_idletasks()
-            
-            def update_thread():
-                try:
-                    caspio = CaspioAPI()
-                    result = caspio.update_record(table_name, pk_field, pk_value, updates)
-                    
-                    if result["success"]:
-                        self.root.after(0, lambda: self._on_edit_success_cleanup(on_close, refresh_callback))
-                    else:
-                        self.root.after(0, lambda: self._on_edit_error(result["message"]))
-                except Exception as e:
-                    self.root.after(0, lambda: self._on_edit_error(str(e)))
-            
-            Thread(target=update_thread, daemon=True).start()
-        
-        ttk.Button(btn_frame, text="💾 Save Changes", command=save_changes, style='Action.TButton').pack(side=tk.RIGHT, padx=5)
-        ttk.Button(btn_frame, text="Cancel", command=on_close).pack(side=tk.RIGHT, padx=5)
-    
-    def _on_edit_success_cleanup(self, cleanup_fn, refresh_callback):
-        """Handle successful edit with cleanup."""
-        cleanup_fn()
-        messagebox.showinfo("Success", "Record updated successfully in Caspio")
-        self.search_status_var.set("Record updated successfully")
-        refresh_callback()
-    
-    def _on_edit_error(self, error_msg):
-        """Handle edit error."""
-        messagebox.showerror("Update Error", f"Failed to update record:\n\n{error_msg}")
-        self.search_status_var.set(f"Update failed: {error_msg}")
-    
-    def add_auth_record(self):
-        """Add a new authorization record."""
-        self._show_add_dialog(
-            "Add Authorization",
-            "a_Authorizations",
-            None,  # Will fetch all fields from table schema
-            self.run_auth_search
-        )
-    
-    def add_patient_record(self):
-        """Add a new patient record."""
-        self._show_add_dialog(
-            "Add Patient",
-            "a_Patient",
-            None,  # Will fetch all fields from table schema
-            self.run_patient_search
-        )
-    
-    def _show_add_dialog(self, title, table_name, fields, refresh_callback):
-        """Show a dialog to add a new record. If fields is None, fetches all fields from table schema."""
-        dialog = tk.Toplevel(self.root)
-        dialog.title(title)
-        dialog.transient(self.root)
-        dialog.grab_set()
-        
-        dialog.geometry("600x600")
-        dialog.resizable(True, True)
-        dialog.configure(bg='#1a1d21')
-        
-        # Fetch all fields from table schema if not provided
-        if fields is None:
-            try:
-                caspio = CaspioAPI()
-                schema = caspio.get_table_schema(table_name)
-                # Exclude auto-generated fields for adding
-                fields = [f["name"] for f in schema if not f.get("readonly", False)]
-                readonly_fields = {f["name"] for f in schema if f.get("readonly", False)}
-            except Exception as e:
-                messagebox.showerror("Error", f"Failed to fetch table schema:\n{e}")
-                dialog.destroy()
-                return
-        else:
-            readonly_fields = set()
-        
-        # Create scrollable frame
-        canvas = tk.Canvas(dialog, bg='#1a1d21', highlightthickness=0)
-        scrollbar = ttk.Scrollbar(dialog, orient="vertical", command=canvas.yview)
-        scrollable_frame = ttk.Frame(canvas)
-        
-        scrollable_frame.bind(
-            "<Configure>",
-            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
-        )
-        
-        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
-        canvas.configure(yscrollcommand=scrollbar.set)
-        
-        canvas.pack(side="left", fill="both", expand=True, padx=10, pady=10)
-        scrollbar.pack(side="right", fill="y")
-        
-        # Enable mousewheel scrolling
-        def _on_mousewheel(event):
-            canvas.yview_scroll(int(-1*(event.delta/120)), "units")
-        canvas.bind_all("<MouseWheel>", _on_mousewheel)
-        
-        entries = {}
-        
-        for i, field in enumerate(fields):
-            if field in readonly_fields:
-                continue  # Skip read-only fields for add
-                
-            frame = ttk.Frame(scrollable_frame)
-            frame.pack(fill=tk.X, pady=3, padx=5)
-            
-            display_name = field.replace("_", " ").replace("Box 2  Patient", "").strip()
-            ttk.Label(frame, text=f"{display_name}:", width=28, anchor='e').pack(side=tk.LEFT, padx=(0, 10))
-            
-            var = tk.StringVar()
-            entry = ttk.Entry(frame, textvariable=var, width=45)
-            entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
-            entries[field] = var
-        
-        # Unbind mousewheel when dialog closes
-        def on_close():
-            canvas.unbind_all("<MouseWheel>")
-            dialog.destroy()
-        
-        dialog.protocol("WM_DELETE_WINDOW", on_close)
-        
-        btn_frame = ttk.Frame(dialog)
-        btn_frame.pack(fill=tk.X, pady=10, padx=10)
-        
-        def add_record():
-            # Collect values
-            new_record = {}
-            for field, var in entries.items():
-                val = var.get().strip()
-                if val:
-                    new_record[field] = val
-            
-            if not new_record:
-                messagebox.showwarning("Warning", "Please enter at least one field value")
-                return
-            
-            self.search_status_var.set("Adding record to Caspio...")
-            dialog.update_idletasks()
-            
-            def insert_thread():
-                try:
-                    caspio = CaspioAPI()
-                    result = caspio.insert_single_record(table_name, new_record)
-                    
-                    if result["success"]:
-                        self.root.after(0, lambda: self._on_add_success(dialog, refresh_callback))
-                    else:
-                        self.root.after(0, lambda: self._on_add_error(result["message"]))
-                except Exception as e:
-                    self.root.after(0, lambda: self._on_add_error(str(e)))
-            
-            Thread(target=insert_thread, daemon=True).start()
-        
-        ttk.Button(btn_frame, text="➕ Add Record", command=add_record, style='Action.TButton').pack(side=tk.RIGHT, padx=5)
-        ttk.Button(btn_frame, text="Cancel", command=on_close).pack(side=tk.RIGHT, padx=5)
-    
-    def _on_add_success(self, dialog, refresh_callback):
-        """Handle successful add."""
-        try:
-            dialog.destroy()
-        except:
-            pass
-        messagebox.showinfo("Success", "Record added successfully to Caspio")
-        self.search_status_var.set("Record added successfully")
-        refresh_callback()
-    
-    def _on_add_error(self, error_msg):
-        """Handle add error."""
-        messagebox.showerror("Insert Error", f"Failed to add record:\n\n{error_msg}")
-        self.search_status_var.set(f"Add failed: {error_msg}")
-    
-    def delete_auth_record(self):
-        """Delete the selected authorization record."""
-        record, idx = self._get_selected_auth_record()
-        if not record:
-            messagebox.showwarning("Warning", "Please select an authorization to delete")
-            return
-        
-        pk_value = record.get(self.search_auth_pk)
-        if not pk_value:
-            messagebox.showerror("Error", "Cannot delete: record has no primary key")
-            return
-        
-        # Confirmation - use correct field names
-        name = f"{record.get('Last_Name', '')}, {record.get('a_First_Name_', '')}"
-        auth_num = record.get('Authorization_', '')
-        if not messagebox.askyesno("Confirm Delete", 
-            f"Are you sure you want to delete this authorization?\n\n"
-            f"Patient: {name}\nAuth #: {auth_num}\n\n"
-            f"This action cannot be undone!"):
-            return
-        
-        self._delete_record("a_Authorizations", self.search_auth_pk, pk_value, self.run_auth_search)
-    
-    def delete_patient_record(self):
-        """Delete the selected patient record."""
-        record, idx = self._get_selected_patient_record()
-        if not record:
-            messagebox.showwarning("Warning", "Please select a patient to delete")
-            return
-        
-        pk_value = record.get(self.search_patient_pk)
-        if not pk_value:
-            messagebox.showerror("Error", "Cannot delete: record has no primary key")
-            return
-        
-        # Confirmation
-        name = f"{record.get('Box_2__Patient_Last_Name', '')}, {record.get('Box_2__Patient_First_Name', '')}"
-        patient_id = record.get('Patient_ID', '')
-        if not messagebox.askyesno("Confirm Delete", 
-            f"Are you sure you want to delete this patient?\n\n"
-            f"Name: {name}\nPatient ID: {patient_id}\n\n"
-            f"This action cannot be undone!"):
-            return
-        
-        self._delete_record("a_Patient", self.search_patient_pk, pk_value, self.run_patient_search)
-    
-    def _delete_record(self, table_name, pk_field, pk_value, refresh_callback):
-        """Delete a record from Caspio."""
-        self.search_status_var.set("Deleting record from Caspio...")
-        self.root.update_idletasks()
-        
-        def delete_thread():
-            try:
-                caspio = CaspioAPI()
-                result = caspio.delete_record(table_name, pk_field, pk_value)
-                
-                if result["success"]:
-                    self.root.after(0, lambda: self._on_delete_success(refresh_callback))
-                else:
-                    self.root.after(0, lambda: self._on_delete_error(result["message"]))
-            except Exception as e:
-                self.root.after(0, lambda: self._on_delete_error(str(e)))
-        
-        Thread(target=delete_thread, daemon=True).start()
-    
-    def _on_delete_success(self, refresh_callback):
-        """Handle successful delete."""
-        messagebox.showinfo("Success", "Record deleted successfully from Caspio")
-        self.search_status_var.set("Record deleted successfully")
-        refresh_callback()
-    
-    def _on_delete_error(self, error_msg):
-        """Handle delete error."""
-        messagebox.showerror("Delete Error", f"Failed to delete record:\n\n{error_msg}")
-        self.search_status_var.set(f"Delete failed: {error_msg}")
     
     def browse_finder_source(self):
         """Browse for source folder."""
@@ -7126,8 +5932,8 @@ PACE Authorization Team""")
             return
         
         # Switch to extractor tab to show progress
-        self.notebook.select(self.extractor_tab)
-        
+        self.auth_notebook.select(self.extractor_tab)
+
         # Set the input/output paths
         self.input_folder.set(folder_path)
         self.output_file.set(output_file)
