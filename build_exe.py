@@ -57,11 +57,11 @@ def main():
     print("\n      Checking for running AuthExtractor.exe...")
     try:
         result = subprocess.run(
-            ["taskkill", "/F", "/IM", "AuthExtractor.exe"],
+            ["taskkill", "/F", "/IM", "Auth Radar.exe"],
             capture_output=True, text=True
         )
         if result.returncode == 0:
-            print("      Closed running AuthExtractor.exe.")
+            print("      Closed running Auth Radar.exe.")
             import time; time.sleep(1)  # brief pause so OS releases file handles
         else:
             print("      AuthExtractor.exe not running (OK).")
@@ -74,7 +74,8 @@ def main():
     # PyInstaller command
     cmd = [
         sys.executable, "-m", "PyInstaller",
-        "--name=AuthExtractor",
+        "--name=Auth Radar",
+        "--distpath=dist",
         "--onedir",  # Create a folder with exe + dependencies (more reliable than onefile)
         "--windowed",  # No console window
         "--noconfirm",  # Overwrite without asking
@@ -182,7 +183,7 @@ def main():
     # Step 4: Post-build setup
     print("\n[4/4] Finalizing...")
     
-    dist_dir = os.path.join(script_dir, "dist", "AuthExtractor")
+    dist_dir = os.path.join(script_dir, "dist", "Auth Radar")
     
     if os.path.exists(dist_dir):
         # Copy poppler to the dist folder if not already there
@@ -231,14 +232,29 @@ def main():
         dist_data = os.path.join(dist_dir, "data")
         os.makedirs(dist_data, exist_ok=True)
 
+        # Flatten: move everything from dist/Auth Radar/ directly into dist/
+        final_dist = os.path.join(script_dir, "dist")
+        print("      Flattening output directory...")
+        for item in os.listdir(dist_dir):
+            src = os.path.join(dist_dir, item)
+            dst = os.path.join(final_dist, item)
+            if os.path.exists(dst):
+                if os.path.isdir(dst):
+                    shutil.rmtree(dst)
+                else:
+                    os.remove(dst)
+            shutil.move(src, dst)
+        shutil.rmtree(dist_dir)
+        dist_dir = final_dist  # update for success message
+
         print("\n" + "=" * 60)
         print("BUILD SUCCESSFUL!")
         print("=" * 60)
-        print(f"\nExecutable created at:")
-        print(f"  {os.path.join(dist_dir, 'AuthExtractor.exe')}")
+        print(f"Executable created at:")
+        print(f"  {os.path.join(dist_dir, 'Auth Radar.exe')}")
         print(f"\nTo distribute:")
-        print(f"  1. Copy the entire 'dist/AuthExtractor' folder to the shared location")
-        print(f"  2. Users run 'AuthExtractor.exe' from that folder")
+        print(f"  1. Copy the entire 'dist/Auth Radar' folder to the shared location")
+        print(f"  2. Users run 'Auth Radar.exe' from that folder")
         print(f"\nNote: If using Gmail, place 'credentials.json' in the same folder as the .exe")
     else:
         print("\n      ERROR: Build output not found!")
