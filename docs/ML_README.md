@@ -287,7 +287,7 @@ trainer.save_model("auth_form_ner_model")
 ## File Structure
 
 ```
-c:\00 Pace Auths- FOR COLE\
+c:\Auth Radar\
 ├── auth_extractor.py              # Main extraction tool (now with ML)
 ├── ml_trainer.py                  # Model training script
 ├── ml_extractor.py                # ML extraction logic

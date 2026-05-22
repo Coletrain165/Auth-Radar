@@ -1,4 +1,4 @@
-﻿"""
+"""
 Pace Auth PDF Extractor - Standalone Desktop Tool with OCR
 Extracts Patient Name, Auth #, Date Approved, Date Auth Expire, and Patient ID
 from authorization PDFs (including scanned documents) and exports to Excel.
@@ -21,20 +21,6 @@ from threading import Thread
 def get_current_year():
     """Get current year as integer."""
     return datetime.now().year
-
-def get_likely_year_suffix():
-    """
-    Get the likely 2-digit year suffix for OCR correction.
-    Returns current year's last 2 digits (e.g., 26 for 2026).
-    """
-    return str(get_current_year())[-2:]
-
-def get_likely_full_year():
-    """
-    Get the likely 4-digit year for OCR correction.
-    Returns current year (e.g., 2026).
-    """
-    return str(get_current_year())
 
 # Current and previous year for OCR pattern matching
 # Auth documents may reference current year or previous year
@@ -118,80 +104,12 @@ def preprocess_image_for_ocr(img):
     
     return img
 
-# ML libraries
-# Set USE_ML = True to re-enable the ML model if/when it's retrained with more data
-USE_ML = False
-try:
-    from ml_extractor import MLExtractor
-    ML_AVAILABLE = True and USE_ML
-except ImportError:
-    ML_AVAILABLE = False
-    print("ML module not available. Using regex extraction only.")
-
-# Azure Document Intelligence
-try:
-    from azure.ai.formrecognizer import DocumentAnalysisClient
-    from azure.core.credentials import AzureKeyCredential
-    AZURE_AVAILABLE = True
-except ImportError:
-    AZURE_AVAILABLE = False
-    print("Azure Document Intelligence not available. Using local OCR.")
-
-# Azure configuration - DISABLED (using local OCR only)
-# To re-enable Azure, uncomment and add your credentials below
-AZURE_ENDPOINT = ""  # "https://authnumbers.cognitiveservices.azure.com/"
-AZURE_KEY = ""  # Disabled - using local OCR + ML extraction only
-AZURE_MODEL_ID = "Pace_Auth_Model_V2"
-
-# Caspio API configuration
-CASPIO_ACCOUNT_ID = "c2dct561"
-CASPIO_CLIENT_ID = "889f2f1e429f4585af25c7b40166b3155c59d419e965fba427"
-CASPIO_CLIENT_SECRET = "e916ce48df3742ed88ca0258ad321316e80804b90bf08988a1"
-CASPIO_TABLE_NAME = "a_Authorizations"
-
-# Fields to extract
-FIELDS = ["Patient Name", "Auth #", "Date Approved", "Date Auth Expire", "Patient ID", "Service_Type_Identifier"]
-
-def get_app_dir():
-    """Get the application directory - works for both script and frozen exe."""
-    if getattr(sys, 'frozen', False):
-        # Running as compiled exe - use exe's directory
-        return pathlib.Path(sys.executable).parent
-    else:
-        # Running as script
-        return pathlib.Path(__file__).parent
-
-# Application directory (for config files, etc.)
-APP_DIR = get_app_dir()
-
-# Poppler path for pdf2image (Windows)
-# Check multiple possible locations for flexibility
-# We need to find the folder containing pdfinfo.exe or pdftoppm.exe (the actual binaries)
-_poppler_locations = [
-    APP_DIR / "poppler" / "poppler-24.08.0" / "Library" / "bin",  # Development/source
-    APP_DIR / "poppler" / "Library" / "bin",  # Alternative structure
-    APP_DIR / "poppler",  # EXE distribution (bin files directly in poppler folder)
-]
-POPPLER_PATH = None
-for _loc in _poppler_locations:
-    # Check if it's a valid poppler bin directory (contains pdftoppm.exe or pdfinfo.exe)
-    if _loc.exists() and (_loc / "pdftoppm.exe").exists():
-        POPPLER_PATH = _loc
-        break
-if POPPLER_PATH is None:
-    # Fallback to first option that exists
-    for _loc in _poppler_locations:
-        if _loc.exists():
-            POPPLER_PATH = _loc
-            break
-if POPPLER_PATH is None:
-    POPPLER_PATH = _poppler_locations[0]  # Default to first option
-
-# Patient names database file
-PATIENT_NAMES_FILE = APP_DIR / "data" / "patient_names.json"
-
-# Password for encrypted PDFs
-PDF_PASSWORD = "92020"
+# --- Centralized configuration (credentials, paths, field list) ---
+# Loaded from config.py which reads .env for secrets
+from config import (
+    CASPIO_ACCOUNT_ID, CASPIO_CLIENT_ID, CASPIO_CLIENT_SECRET, CASPIO_TABLE_NAME,
+    FIELDS, APP_DIR, POPPLER_PATH, PATIENT_NAMES_FILE, PDF_PASSWORD,
+)
 
 
 class PatientNameMatcher:
@@ -225,10 +143,6 @@ class PatientNameMatcher:
                 self.patients.append((last, first, name))
         except Exception as e:
             print(f"Error loading patient names: {e}")
-    
-    def reload_names(self):
-        """Reload patient names from file (useful after syncing from Caspio)."""
-        self.load_names()
     
     def normalize(self, s):
         """Normalize a string for comparison."""
@@ -696,62 +610,6 @@ class CaspioAPI:
         
         return len(patient_list)
     
-    def search_records(self, table_name, search_term, search_fields=None, max_results=100):
-        """
-        Search for records in a Caspio table.
-        
-        Args:
-            table_name: Name of the Caspio table (e.g., 'a_Authorizations', 'a_Patient')
-            search_term: The search term to look for
-            search_fields: List of field names to search in (if None, searches common name fields)
-            max_results: Maximum number of results to return
-        
-        Returns:
-            List of matching records as dictionaries
-        """
-        token = self.get_access_token()
-        
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json"
-        }
-        
-        # URL encode the search term
-        import urllib.parse
-        encoded_term = urllib.parse.quote(search_term)
-        
-        # Build WHERE clause for searching
-        if search_fields:
-            # Search in specified fields
-            conditions = [f"{field} LIKE '%{search_term}%'" for field in search_fields]
-            where_clause = " OR ".join(conditions)
-        else:
-            # Default search fields based on table
-            if table_name == "a_Patient":
-                where_clause = f"Box_2__Patient_Last_Name LIKE '%{search_term}%' OR Box_2__Patient_First_Name LIKE '%{search_term}%' OR Concantenated_Patient_Name LIKE '%{search_term}%'"
-            elif table_name == "a_Authorizations":
-                where_clause = f"Last_Name LIKE '%{search_term}%' OR First_Name LIKE '%{search_term}%' OR Auth_Number LIKE '%{search_term}%' OR Patient_ID LIKE '%{search_term}%'"
-            else:
-                # Generic search - will likely fail but try anyway
-                where_clause = f"Name LIKE '%{search_term}%'"
-        
-        # URL encode the WHERE clause
-        encoded_where = urllib.parse.quote(where_clause)
-        
-        url = f"{self.base_url}/tables/{table_name}/records?q.pageSize={max_results}&q.where={encoded_where}"
-        
-        try:
-            response = requests.get(url, headers=headers)
-            
-            if response.status_code != 200:
-                raise Exception(f"Search failed: {response.status_code} - {response.text}")
-            
-            data = response.json()
-            return data.get("Result", [])
-        except Exception as e:
-            print(f"Search error: {e}")
-            return []
-    
     def get_all_records(self, table_name, select_fields=None, max_results=1000):
         """
         Fetch all records from a table (with optional field selection).
@@ -855,110 +713,6 @@ class CaspioAPI:
                 return {"success": False, "message": f"Update failed: {response.status_code} - {response.text}"}
         except Exception as e:
             return {"success": False, "message": f"Update error: {str(e)}"}
-    
-    def delete_record(self, table_name, pk_field, pk_value):
-        """
-        Delete a record from a Caspio table.
-        
-        Args:
-            table_name: Name of the Caspio table
-            pk_field: Name of the primary key field
-            pk_value: Value of the primary key to identify the record
-        
-        Returns:
-            Dict with success status and any error message
-        """
-        import urllib.parse
-        
-        token = self.get_access_token()
-        
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json"
-        }
-        
-        # Build WHERE clause
-        where_clause = f"{pk_field}='{pk_value}'"
-        encoded_where = urllib.parse.quote(where_clause)
-        
-        url = f"{self.base_url}/tables/{table_name}/records?q.where={encoded_where}"
-        
-        try:
-            response = requests.delete(url, headers=headers)
-            
-            if response.status_code in (200, 204):
-                return {"success": True, "message": "Record deleted successfully"}
-            else:
-                return {"success": False, "message": f"Delete failed: {response.status_code} - {response.text}"}
-        except Exception as e:
-            return {"success": False, "message": f"Delete error: {str(e)}"}
-    
-    def search_with_operator(self, table_name, field, operator, value, select_fields=None, max_results=100):
-        """
-        Search for records using a specific operator (like Caspio criteria builder).
-        
-        Args:
-            table_name: Name of the Caspio table
-            field: Field name to search on
-            operator: Operator type - 'equals', 'contains', 'starts_with', 'ends_with', 
-                      'not_equal', 'is_empty', 'is_not_empty', 'greater_than', 'less_than'
-            value: The value to compare against
-            select_fields: Optional list of fields to return
-            max_results: Maximum number of results
-        
-        Returns:
-            List of matching records
-        """
-        import urllib.parse
-        
-        token = self.get_access_token()
-        
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json"
-        }
-        
-        # Build WHERE clause based on operator
-        if operator == 'equals':
-            where_clause = f"{field}='{value}'"
-        elif operator == 'not_equal':
-            where_clause = f"{field}<>'{value}'"
-        elif operator == 'contains':
-            where_clause = f"{field} LIKE '%{value}%'"
-        elif operator == 'starts_with':
-            where_clause = f"{field} LIKE '{value}%'"
-        elif operator == 'ends_with':
-            where_clause = f"{field} LIKE '%{value}'"
-        elif operator == 'is_empty':
-            where_clause = f"({field} IS NULL OR {field}='')"
-        elif operator == 'is_not_empty':
-            where_clause = f"({field} IS NOT NULL AND {field}<>'')"
-        elif operator == 'greater_than':
-            where_clause = f"{field}>'{value}'"
-        elif operator == 'less_than':
-            where_clause = f"{field}<'{value}'"
-        else:
-            # Default to contains
-            where_clause = f"{field} LIKE '%{value}%'"
-        
-        encoded_where = urllib.parse.quote(where_clause)
-        
-        url = f"{self.base_url}/tables/{table_name}/records?q.pageSize={max_results}&q.where={encoded_where}"
-        
-        if select_fields:
-            url += f"&q.select={','.join(select_fields)}"
-        
-        try:
-            response = requests.get(url, headers=headers)
-            
-            if response.status_code != 200:
-                raise Exception(f"Search failed: {response.status_code} - {response.text}")
-            
-            data = response.json()
-            return data.get("Result", [])
-        except Exception as e:
-            print(f"Search error: {e}")
-            return []
     
     def insert_single_record(self, table_name, record):
         """
@@ -1090,92 +844,6 @@ class PDFExtractor:
         if self.tesseract_path and OCR_AVAILABLE:
             pytesseract.pytesseract.tesseract_cmd = self.tesseract_path
         
-        # Initialize Azure Document Intelligence client
-        self.azure_client = None
-        self.use_azure = False
-        if AZURE_AVAILABLE and AZURE_KEY and AZURE_ENDPOINT:
-            try:
-                self.azure_client = DocumentAnalysisClient(
-                    AZURE_ENDPOINT, 
-                    AzureKeyCredential(AZURE_KEY)
-                )
-                self.use_azure = True
-                print(f"Azure Document Intelligence enabled (model: {AZURE_MODEL_ID}).")
-            except Exception as e:
-                print(f"Could not initialize Azure client: {e}. Using local OCR.")
-                self.use_azure = False
-        
-        # Initialize ML extractor if available
-        self.ml_extractor = None
-        self.use_ml = False
-        if ML_AVAILABLE:
-            model_path = APP_DIR / "auth_form_ner_model"
-            if model_path.exists():
-                try:
-                    self.ml_extractor = MLExtractor(model_path=str(model_path))
-                    self.use_ml = True
-                    print("ML model loaded. Using hybrid extraction (ML + Regex).")
-                except Exception as e:
-                    print(f"Could not load ML model: {e}. Using regex only.")
-                    self.use_ml = False
-            else:
-                print("ML model not found. Using regex extraction only.")
-                print(f"To use ML, train a model with: python ml_trainer.py --sample --output {model_path}")
-    
-    def extract_with_azure(self, pdf_path):
-        """
-        Extract fields using Azure Document Intelligence custom model.
-        Returns dict with extracted fields or None if extraction fails.
-        """
-        if not self.use_azure or not self.azure_client:
-            return None
-        
-        try:
-            with open(pdf_path, "rb") as f:
-                poller = self.azure_client.begin_analyze_document(AZURE_MODEL_ID, f)
-                result = poller.result()
-            
-            extracted = {}
-            for doc in result.documents:
-                for name, field in doc.fields.items():
-                    if field.value:
-                        # Map Azure field names to our field names
-                        field_name = name.replace("_", " ")
-                        # Normalize field names
-                        if "patient name" in field_name.lower() or field_name == "Patient Name":
-                            extracted["Patient Name"] = field.value
-                            extracted["Patient Name_confidence"] = field.confidence
-                            extracted["Patient Name_method"] = "azure"
-                        elif "auth" in field_name.lower() and "#" in field_name:
-                            extracted["Auth #"] = str(field.value)
-                            extracted["Auth #_confidence"] = field.confidence
-                            extracted["Auth #_method"] = "azure"
-                        elif "date approved" in field_name.lower():
-                            # Handle date value - could be string or date object
-                            if hasattr(field.value, 'strftime'):
-                                extracted["Date Approved"] = field.value.strftime("%m/%d/%Y")
-                            else:
-                                extracted["Date Approved"] = str(field.value)
-                            extracted["Date Approved_confidence"] = field.confidence
-                            extracted["Date Approved_method"] = "azure"
-                        elif "date auth expire" in field_name.lower() or "expire" in field_name.lower():
-                            if hasattr(field.value, 'strftime'):
-                                extracted["Date Auth Expire"] = field.value.strftime("%m/%d/%Y")
-                            else:
-                                extracted["Date Auth Expire"] = str(field.value)
-                            extracted["Date Auth Expire_confidence"] = field.confidence
-                            extracted["Date Auth Expire_method"] = "azure"
-                        elif "patient id" in field_name.lower() or "participant id" in field_name.lower():
-                            extracted["Patient ID"] = str(field.value)
-                            extracted["Patient ID_confidence"] = field.confidence
-                            extracted["Patient ID_method"] = "azure"
-            
-            return extracted if extracted else None
-            
-        except Exception as e:
-            print(f"Azure extraction error: {e}")
-            return None
-    
     def find_auth_page(self, page_texts):
         """Find the page containing the TREATMENT AUTHORIZATION FORM."""
         # The auth form page MUST have "TREATMENT AUTHORIZATION FORM" header
@@ -2168,32 +1836,10 @@ class PDFExtractor:
         # Get fallback data from filename
         filename_data = self.extract_from_filename(pdf_path.stem)
         
-        # TRY AZURE DOCUMENT INTELLIGENCE FIRST (best quality)
-        if self.use_azure:
-            azure_results = self.extract_with_azure(pdf_path)
-            if azure_results:
-                result["extraction_method"] = "azure"
-                for field in FIELDS:
-                    if field in azure_results and azure_results[field]:
-                        result[field] = azure_results[field]
-                        if f"{field}_confidence" in azure_results:
-                            result[f"{field}_confidence"] = azure_results[f"{field}_confidence"]
-                        if f"{field}_method" in azure_results:
-                            result[f"{field}_method"] = azure_results[f"{field}_method"]
-                
-                # If Azure got all fields, we're done
-                if all(result.get(field) for field in FIELDS):
-                    # Use filename fallback for patient name if needed
-                    if not result["Patient Name"] and filename_data["Patient Name"]:
-                        result["Patient Name"] = filename_data["Patient Name"]
-                        result["Patient Name_method"] = "filename"
-                    return result
-        
-        # FALLBACK TO LOCAL OCR + ML/REGEX
         # Extract text from PDF (finds the auth form page automatically)
         # auth_text = just the auth form page, all_text = all pages combined
         auth_text, all_text, method, page_num = self.extract_text_from_pdf(pdf_path)
-        result["extraction_method"] = method if not self.use_azure else f"azure + {method}"
+        result["extraction_method"] = method
         result["auth_page"] = page_num if page_num > 0 else "all"
         
         # Use auth_text for main extraction (Auth #, dates, name)
@@ -2418,29 +2064,85 @@ class PDFExtractor:
         
         return result
     
-    def process_folder(self, folder_path, progress_callback=None):
-        """Process all PDFs in a folder."""
+    def process_all_files(self, folder_path, progress_callback=None):
+        """Process all supported files in a folder (PDF, CSV, XLSX, PNG, JPG).
+
+        PDFs use the existing process_pdf pipeline.
+        Other file types are routed through extraction.router which picks
+        the best extraction method (structured parse, OCR, etc.).
+        Results from the router are converted into the same dict format
+        that process_pdf returns so format_results() works unchanged.
+        """
+        from extraction.router import classify_file, route_file
+        from extraction.structured_extractor import extract_csv_rows
+        from extraction.excel_extractor import extract_xlsx_rows
+        from config import SUPPORTED_EXTENSIONS
+
         folder = pathlib.Path(folder_path)
-        pdf_files = sorted(folder.glob("*.pdf"))
-        
+
+        # Collect all supported files (recursive glob for subfolder support)
+        all_files = []
+        for ext in SUPPORTED_EXTENSIONS:
+            all_files.extend(folder.rglob(f"*{ext}"))
+        all_files = sorted(set(all_files))
+
         self.results = []
-        total = len(pdf_files)
-        
-        for i, pdf_file in enumerate(pdf_files):
+        total = len(all_files)
+
+        for i, file_path in enumerate(all_files):
+            file_type = classify_file(str(file_path))
+
             try:
-                result = self.process_pdf(pdf_file)
-                self.results.append(result)
+                if file_type == "pdf":
+                    # Use existing battle-tested PDF pipeline
+                    result = self.process_pdf(file_path)
+                    self.results.append(result)
+                elif file_type in ("csv", "xlsx"):
+                    # Structured files can contain multiple rows
+                    if file_type == "csv":
+                        rows = extract_csv_rows(str(file_path))
+                    else:
+                        rows = extract_xlsx_rows(str(file_path))
+                    for er in rows:
+                        self.results.append(self._extraction_result_to_dict(er))
+                else:
+                    # Images and anything else -> router
+                    er = route_file(str(file_path))
+                    self.results.append(self._extraction_result_to_dict(er))
             except Exception as e:
                 self.results.append({
-                    "file": pdf_file.name,
+                    "file": file_path.name,
                     "error": str(e),
                     "extracted_at": datetime.now().isoformat(),
                 })
-            
+
             if progress_callback:
-                progress_callback(i + 1, total, pdf_file.name)
-        
+                progress_callback(i + 1, total, file_path.name)
+
         return self.results
+
+    @staticmethod
+    def _extraction_result_to_dict(er):
+        """Convert an ExtractionResult into the dict format process_pdf returns."""
+        result = {
+            "file": pathlib.Path(er.source_file).name if er.source_file else "",
+            "extracted_at": datetime.now().isoformat(),
+            "extraction_method": er.extraction_method,
+        }
+        for field in FIELDS:
+            result[field] = er.fields.get(field)
+        if er.error:
+            result["error"] = er.error
+        if er.raw_text:
+            result["raw_text_preview"] = er.raw_text[:800]
+        if er.confidence:
+            for field, conf in er.confidence.items():
+                result[f"{field}_confidence"] = conf
+        if er.warnings:
+            for w in er.warnings:
+                if "_method" not in w:
+                    result.setdefault("warnings", []).append(w)
+        return result
     
     def get_auth_type_from_filename(self, filename):
         """
@@ -2545,7 +2247,16 @@ class PDFExtractor:
             auth_type = self.get_auth_type_from_filename(filename)
             service_type_identifier = "Escort" if auth_type == "Escort" else ""
             
-            # Create ONE row per PDF
+            # Build warning summary from per-field fallback methods
+            warnings = []
+            for f in FIELDS:
+                meth = result.get(f"{f}_method", "")
+                if meth and "fallback" in meth:
+                    warnings.append(f"{f}: {meth}")
+            if result.get("warnings"):
+                warnings.extend(result["warnings"])
+
+            # Create ONE row per file
             formatted_rows.append({
                 "Last Name": last_name,
                 "First Name": first_name,
@@ -2564,6 +2275,9 @@ class PDFExtractor:
                 "Clearing House Payer ID": "98481",
                 "Location ID": "CAENC",
                 "Unique Payer Identifier": "Innermark : WayStar (98481)",
+                "Extraction Method": result.get("extraction_method", ""),
+                "Source File": filename,
+                "Warnings": "; ".join(warnings) if warnings else "",
             })
         
         # Store match stats for later access
@@ -2738,7 +2452,7 @@ class SplashScreen:
         top = tk.Frame(inner, bg=self.bg)
         top.pack(expand=True, fill=tk.BOTH, padx=50, pady=(44, 8))
 
-        logo_path = APP_DIR / "auth_radar_logo.png"
+        logo_path = APP_DIR / "Auth Radar Logo.png"
         self._logo_img = None
         if logo_path.exists():
             try:
@@ -2841,7 +2555,7 @@ class LandingPage:
         
         # Auth Radar branding — logo only
         self._landing_logo = None
-        logo_path = APP_DIR / "auth_radar_logo.png"
+        logo_path = APP_DIR / "Auth Radar Logo.png"
         if logo_path.exists():
             try:
                 from PIL import Image, ImageTk
@@ -2982,16 +2696,21 @@ class AuthExtractorApp:
         self.finder_duplicate_imports = []  # Duplicate names from import
         self.finder_original_count = 0  # Original count before dedup
 
-        # Search tab variables
-        self.search_auth_term_var = tk.StringVar()  # Authorization search term
-        self.search_patient_term_var = tk.StringVar()  # Patient search term
-        self.search_auths_results = []  # Authorization search results
-        self.search_patients_results = []  # Patient search results
-        
         # In-app results storage for inline editing
         self.current_results_df = None  # DataFrame of formatted results
         self.results_columns = []  # Column names for results table
         self.editing_cell = None  # Track cell being edited (item, column)
+
+        # Dropbox integration
+        self.dropbox_service = None  # DropboxService instance
+        self.dropbox_files = []     # List of FileMetadata from last listing
+        self.dropbox_folder_var = tk.StringVar(value="")  # Selected Dropbox folder path
+        self.dropbox_keyword_var = tk.StringVar(value="")  # filename keyword filter
+        self.dropbox_name_filter_var = tk.StringVar(value="")  # patient name in filename
+        self.dropbox_name_filter_list = []  # list of patient names
+        self.dropbox_status_var = tk.StringVar(value="(not connected)")
+        self.dropbox_name_count_var = tk.StringVar(value="(none)")
+        self.finder_source_type = tk.StringVar(value="local")  # "local" or "dropbox"
         
         self.setup_ui()
         self.check_ocr_status()
@@ -3057,7 +2776,7 @@ class AuthExtractorApp:
         
         # Load logo if available
         self._header_logo = None
-        logo_path = APP_DIR / "auth_radar_logo.png"
+        logo_path = APP_DIR / "Auth Radar Logo.png"
         if logo_path.exists():
             try:
                 from PIL import Image, ImageTk
@@ -3080,52 +2799,34 @@ class AuthExtractorApp:
         right_frame = ttk.Frame(header_frame)
         right_frame.pack(side=tk.RIGHT)
         
-        self.radar_status_label = tk.Label(right_frame, text="● ONLINE",
-                                           font=('Segoe UI', 8, 'bold'),
-                                           bg=self.colors['bg'], fg='#22C55E')
-        self.radar_status_label.pack(side=tk.LEFT, padx=(0, 12))
-        
-        back_btn = ttk.Button(right_frame, text="← Change Payer", 
+        back_btn = ttk.Button(right_frame, text="← Change Payer",
                               command=self.return_to_landing)
         back_btn.pack(side=tk.LEFT)
         
-        # Create notebook for tabs
-        self.notebook = ttk.Notebook(self.root)
-        self.notebook.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 20))
-        
-        # ===== MAIN TAB 1: Auth Management =====
-        self.auth_management_tab = ttk.Frame(self.notebook)
-        self.notebook.add(self.auth_management_tab, text="   Auth Management   ")
-        
-        # Create nested notebook inside Auth Management
-        self.auth_notebook = ttk.Notebook(self.auth_management_tab, style='Sub.TNotebook')
-        self.auth_notebook.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-        
-        # Sub-Tab 1: File Finder
+        # Tabs — numbered workflow steps, directly on root
+        self.auth_notebook = ttk.Notebook(self.root)
+        self.auth_notebook.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 20))
+
+        # Tab 1: Find Auth PDFs
         self.finder_tab = ttk.Frame(self.auth_notebook)
-        self.auth_notebook.add(self.finder_tab, text="   File Finder   ")
+        self.auth_notebook.add(self.finder_tab, text="  1. Find Auth PDFs  ")
         self.setup_finder_tab()
-        
-        # Sub-Tab 2: Extract PDFs
+
+        # Tab 2: Extract Data
         self.extractor_tab = ttk.Frame(self.auth_notebook)
-        self.auth_notebook.add(self.extractor_tab, text="   Extract PDFs   ")
+        self.auth_notebook.add(self.extractor_tab, text="  2. Extract Data  ")
         self.setup_extractor_tab()
-        
-        # Sub-Tab 3: Review & Edit
+
+        # Tab 3: Review & Edit
         self.review_tab = ttk.Frame(self.auth_notebook)
-        self.auth_notebook.add(self.review_tab, text="   Review & Edit   ")
+        self.auth_notebook.add(self.review_tab, text="  3. Review & Edit  ")
         self.setup_review_tab()
 
-        # Sub-Tab 4: Email
+        # Tab 4: Email
         self.email_tab = ttk.Frame(self.auth_notebook)
-        self.auth_notebook.add(self.email_tab, text="   Email   ")
+        self.auth_notebook.add(self.email_tab, text="  4. Email  ")
         self.setup_email_tab()
 
-        # ===== MAIN TAB 2: Search =====
-        self.search_tab = ttk.Frame(self.notebook)
-        self.notebook.add(self.search_tab, text="   Search   ")
-        self.setup_search_tab()
-    
     def apply_theme(self):
         """Apply modern dark theme styling to the application."""
         style = ttk.Style()
@@ -3147,18 +2848,6 @@ class AuthExtractorApp:
             background=[('selected', c['accent'])],
             foreground=[('selected', '#ffffff')],
             padding=[('selected', [40, 14])])
-        
-        # Sub-notebook tabs - smaller, nested look
-        style.configure('Sub.TNotebook', background=c['bg'], borderwidth=0, tabmargins=[0, 0, 0, 0])
-        style.configure('Sub.TNotebook.Tab',
-            background=c['panel'],
-            foreground=c['text_light'],
-            padding=[20, 8],
-            font=('Segoe UI', 9))
-        style.map('Sub.TNotebook.Tab',
-            background=[('selected', c['accent_blue'])],
-            foreground=[('selected', '#ffffff')],
-            padding=[('selected', [20, 8])])
         
         # Frames - dark background
         style.configure('TFrame', background=c['bg'])
@@ -3313,7 +3002,7 @@ class AuthExtractorApp:
         
         # Description
         desc_label = ttk.Label(main_frame, 
-            text="Extract Patient Name, Auth #, Dates, and Patient ID from authorization PDFs (supports OCR)",
+            text="Download and unlock authorization PDFs so you can review them or upload to ChatGPT for extraction.",
             style='Desc.TLabel')
         desc_label.pack(anchor=tk.W, pady=(0, 15))
         
@@ -3356,9 +3045,9 @@ class AuthExtractorApp:
         
         browse_btn = ttk.Button(self.manual_folder_frame, text="📁 Browse Folder...", command=self.browse_input)
         browse_btn.pack(side=tk.RIGHT)
-        
+
         # Output file selection
-        output_frame = ttk.LabelFrame(main_frame, text="Step 2: Choose Output Excel File", padding="10")
+        output_frame = ttk.LabelFrame(main_frame, text="Step 2: Choose Output Folder", padding="10")
         output_frame.pack(fill=tk.X, pady=5)
         
         output_entry = ttk.Entry(output_frame, textvariable=self.output_file, width=60)
@@ -3366,8 +3055,33 @@ class AuthExtractorApp:
         
         save_btn = ttk.Button(output_frame, text="Save As...", command=self.browse_output)
         save_btn.pack(side=tk.RIGHT)
+
+        # Status bar — pack at bottom first so it's always visible
+        status_bar = ttk.Label(main_frame, textvariable=self.status_text,
+                               relief=tk.SUNKEN, anchor=tk.W)
+        status_bar.pack(fill=tk.X, pady=(4, 0), side=tk.BOTTOM)
+
+        # Buttons — pack at bottom before progress so they're always visible
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(fill=tk.X, pady=(6, 2), side=tk.BOTTOM)
+
+        self.extract_btn = ttk.Button(button_frame, text="🚀 Start Extraction",
+                                      command=self.start_extraction, style='Action.TButton')
+        self.extract_btn.pack(side=tk.LEFT, padx=5)
+
+        self.goto_review_btn = ttk.Button(button_frame, text="📋 Go to Review",
+                                          command=lambda: self.auth_notebook.select(self.review_tab))
+        self.goto_review_btn.pack(side=tk.LEFT, padx=5)
+
+        self.sync_btn = ttk.Button(button_frame, text="🔄 Sync Patient Names",
+                                   command=self.sync_patient_names_from_caspio)
+        self.sync_btn.pack(side=tk.LEFT, padx=5)
+
+        self.test_btn = ttk.Button(button_frame, text="🔍 Test Single PDF",
+                                   command=self.test_single_pdf)
+        self.test_btn.pack(side=tk.LEFT, padx=5)
         
-        # Progress section
+        # Progress section — expands to fill remaining space between steps and buttons
         progress_frame = ttk.LabelFrame(main_frame, text="Progress & Log", padding="10")
         progress_frame.pack(fill=tk.BOTH, expand=True, pady=5)
         
@@ -3388,31 +3102,6 @@ class AuthExtractorApp:
         
         self.log_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        
-        # Buttons
-        button_frame = ttk.Frame(main_frame)
-        button_frame.pack(fill=tk.X, pady=10)
-        
-        self.extract_btn = ttk.Button(button_frame, text="🚀 Extract & Export", 
-                                      command=self.start_extraction, style='Action.TButton')
-        self.extract_btn.pack(side=tk.LEFT, padx=5)
-        
-        self.test_btn = ttk.Button(button_frame, text="🔍 Test Single PDF", 
-                                   command=self.test_single_pdf)
-        self.test_btn.pack(side=tk.LEFT, padx=5)
-        
-        self.sync_btn = ttk.Button(button_frame, text="🔄 Sync Patient Names", 
-                                   command=self.sync_patient_names_from_caspio)
-        self.sync_btn.pack(side=tk.LEFT, padx=5)
-        
-        self.goto_review_btn = ttk.Button(button_frame, text="📋 Go to Review Tab", 
-                                          command=lambda: self.auth_notebook.select(self.review_tab))
-        self.goto_review_btn.pack(side=tk.LEFT, padx=5)
-        
-        # Status bar
-        status_bar = ttk.Label(main_frame, textvariable=self.status_text, 
-                              relief=tk.SUNKEN, anchor=tk.W)
-        status_bar.pack(fill=tk.X, pady=(10, 0))
     
     def on_results_double_click(self, event):
         """Handle double-click to edit a cell in results table."""
@@ -3470,8 +3159,11 @@ class AuthExtractorApp:
         item, col_idx, col_name = self.editing_cell
         new_value = self.edit_entry.get()
         
-        # Update treeview
+        # Get old value for audit trail
         current_values = list(self.results_tree.item(item, "values"))
+        old_value = current_values[col_idx] if col_idx < len(current_values) else ""
+        
+        # Update treeview
         current_values[col_idx] = new_value
         self.results_tree.item(item, values=current_values)
         
@@ -3484,6 +3176,26 @@ class AuthExtractorApp:
                     self.current_results_df.at[row_idx, col_name] = new_value
             except Exception:
                 pass
+        
+        # Audit log the edit (non-blocking)
+        if str(old_value) != str(new_value):
+            try:
+                # Try to get source file from the row for context
+                source_file = ""
+                src_idx = None
+                if "Source File" in self.results_columns:
+                    src_idx = self.results_columns.index("Source File")
+                if src_idx is not None and src_idx < len(current_values):
+                    source_file = current_values[src_idx]
+                
+                from audit.logger import AuditLogger
+                AuditLogger().log_review(
+                    source_file=source_file or "unknown",
+                    reviewer="user",
+                    edits={col_name: {"old": str(old_value), "new": str(new_value)}},
+                )
+            except Exception:
+                pass  # audit failure should not block editing
         
         # Cleanup
         self.edit_entry.destroy()
@@ -3531,7 +3243,10 @@ class AuthExtractorApp:
                 "CPT Code 5": "CPT Code 5",
                 "Clearing House Payer ID": "Clearing House Payer ID",
                 "Location ID": "Location ID",
-                "Unique Payer Identifier": "Unique Payer Identifier"
+                "Unique Payer Identifier": "Unique Payer Identifier",
+                "Extraction Method": "Extraction Method",
+                "Source File": "Source File",
+                "Warnings": "Warnings",
             }
             
             # Parse date columns for comparison
@@ -3559,7 +3274,7 @@ class AuthExtractorApp:
                     else:
                         values.append("")
                 
-                # Determine if this row is expired (Last DOS > Date Auth Expired)
+                # Determine row tag: expired takes priority, then method-based, then warnings
                 is_expired = False
                 if date_expired_col is not None and last_dos_col is not None:
                     expire_val = date_expired_col.iloc[idx] if idx < len(date_expired_col) else None
@@ -3568,7 +3283,26 @@ class AuthExtractorApp:
                         is_expired = True
                         expired_count += 1
                 
-                tag = "expired" if is_expired else "normal"
+                if is_expired:
+                    tag = "expired"
+                else:
+                    # Color by extraction method
+                    ext_method = ""
+                    if "Extraction Method" in df.columns:
+                        ext_method = str(row.get("Extraction Method", "")).lower()
+                    has_warnings = ""
+                    if "Warnings" in df.columns:
+                        has_warnings = str(row.get("Warnings", ""))
+                    
+                    if ext_method in ("csv_parse", "excel_parse"):
+                        tag = "structured"
+                    elif "ocr" in ext_method:
+                        tag = "ocr"
+                    elif has_warnings:
+                        tag = "warning"
+                    else:
+                        tag = "normal"
+                
                 self.results_tree.insert("", tk.END, values=values, tags=(tag,))
                 successful_count += 1
         else:
@@ -3659,7 +3393,8 @@ class AuthExtractorApp:
             "Last Name", "First Name", "Patient Name", "Patient ID", "Service_Type_Identifier",
             "Auth Number", "Date Approved", "Date Auth Expired", "Last DOS",
             "CPT Code", "CPT Code 2", "CPT Code 3", "CPT Code 4", "CPT Code 5",
-            "Clearing House Payer ID", "Location ID", "Unique Payer Identifier"
+            "Clearing House Payer ID", "Location ID", "Unique Payer Identifier",
+            "Extraction Method", "Source File", "Warnings"
         ]
         
         self.results_tree = ttk.Treeview(tree_container, columns=self.results_columns, show="headings", height=10)
@@ -3669,15 +3404,19 @@ class AuthExtractorApp:
             "Last Name": 110, "First Name": 90, "Patient Name": 140, "Patient ID": 70, "Service_Type_Identifier": 85,
             "Auth Number": 90, "Date Approved": 95, "Date Auth Expired": 105, "Last DOS": 85,
             "CPT Code": 70, "CPT Code 2": 75, "CPT Code 3": 75, "CPT Code 4": 75, "CPT Code 5": 75,
-            "Clearing House Payer ID": 130, "Location ID": 80, "Unique Payer Identifier": 130
+            "Clearing House Payer ID": 130, "Location ID": 80, "Unique Payer Identifier": 130,
+            "Extraction Method": 95, "Source File": 150, "Warnings": 180,
         }
         for col in self.results_columns:
             self.results_tree.heading(col, text=col)
             self.results_tree.column(col, width=col_widths.get(col, 80), anchor=tk.W)
         
-        # Configure tag for expired (red) rows - dark theme
+        # Configure tags for row highlighting - dark theme
         self.results_tree.tag_configure("expired", background="#3B1219", foreground="#FCA5A5")
         self.results_tree.tag_configure("normal", background="#1E293B")
+        self.results_tree.tag_configure("ocr", background="#2D2B1E", foreground="#FDE68A")  # amber tint
+        self.results_tree.tag_configure("structured", background="#1E2D3B", foreground="#93C5FD")  # blue tint
+        self.results_tree.tag_configure("warning", background="#3B2F1E", foreground="#FBBF24")  # warning amber
         
         # Scrollbars
         tree_scroll_y = ttk.Scrollbar(tree_container, orient=tk.VERTICAL, command=self.results_tree.yview)
@@ -3711,36 +3450,32 @@ class AuthExtractorApp:
         # === BOTTOM BUTTON BAR ===
         button_frame = ttk.Frame(main_frame)
         button_frame.pack(fill=tk.X, pady=(4, 4))
-        
-        self.refresh_review_btn = ttk.Button(button_frame, text="🔄 Refresh", 
-                                              command=self.refresh_review_from_excel)
-        self.refresh_review_btn.pack(side=tk.LEFT, padx=2)
-        
-        self.open_btn = ttk.Button(button_frame, text="📂 Open File", 
-                                   command=self.open_output)
-        self.open_btn.pack(side=tk.LEFT, padx=2)
-        
-        self.caspio_btn = ttk.Button(button_frame, text="☁️ Upload All to Caspio", 
-                                     command=lambda: self.show_caspio_upload_dialog(valid_only=False), 
-                                     style='Action.TButton')
-        self.caspio_btn.pack(side=tk.LEFT, padx=2)
-        
-        self.caspio_valid_btn = ttk.Button(button_frame, text="✅ Upload Valid Only", 
-                                            command=lambda: self.show_caspio_upload_dialog(valid_only=True))
+
+        self.caspio_valid_btn = ttk.Button(button_frame, text="☁️ Upload Valid to Caspio",
+                                            command=lambda: self.show_caspio_upload_dialog(valid_only=True),
+                                            style='Action.TButton')
         self.caspio_valid_btn.pack(side=tk.LEFT, padx=2)
+
+        self.caspio_btn = ttk.Button(button_frame, text="Upload All",
+                                     command=lambda: self.show_caspio_upload_dialog(valid_only=False))
+        self.caspio_btn.pack(side=tk.LEFT, padx=2)
 
         self.view_errors_btn = ttk.Button(button_frame, text="⚠️ View Errors",
                                            command=self.show_errors_popup)
         self.view_errors_btn.pack(side=tk.LEFT, padx=2)
-        
-        # Valid count indicator and legend on same row
+
+        self.refresh_review_btn = ttk.Button(button_frame, text="🔄 Refresh",
+                                              command=self.refresh_review_from_excel)
+        self.refresh_review_btn.pack(side=tk.LEFT, padx=2)
+
+        self.open_btn = ttk.Button(button_frame, text="📂 Open File",
+                                   command=self.open_output)
+        self.open_btn.pack(side=tk.LEFT, padx=2)
+
+        # Valid count indicator
         self.valid_count_var = tk.StringVar(value="")
-        ttk.Label(button_frame, textvariable=self.valid_count_var, 
+        ttk.Label(button_frame, textvariable=self.valid_count_var,
                   font=("Segoe UI", 9), foreground="#4CAF50").pack(side=tk.LEFT, padx=(10, 5))
-        
-        tk.Label(button_frame, text="  ", bg="#5c2828", width=2).pack(side=tk.LEFT, padx=(5, 2))
-        ttk.Label(button_frame, text="= Expired", 
-                  font=("Segoe UI", 8)).pack(side=tk.LEFT)
 
     def show_errors_popup(self):
         """Show extraction errors in a popup window."""
@@ -4135,15 +3870,46 @@ class AuthExtractorApp:
         folders_frame = ttk.Frame(top_row)
         folders_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         
-        # Source folder selection
-        source_frame = ttk.LabelFrame(folders_frame, text="Source Folder", padding="8")
-        source_frame.pack(fill=tk.X, pady=(0, 5), padx=(0, 15))
-        
-        source_entry = ttk.Entry(source_frame, textvariable=self.finder_source, width=55)
+        # Source type selection — Local Folder or Dropbox
+        src_type_row = ttk.Frame(folders_frame)
+        src_type_row.pack(fill=tk.X, pady=(0, 6), padx=(0, 15))
+        ttk.Label(src_type_row, text="Source:", font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Radiobutton(src_type_row, text="📁 Local Folder", variable=self.finder_source_type,
+                        value="local", command=self._toggle_finder_source).pack(side=tk.LEFT, padx=(0, 20))
+        ttk.Radiobutton(src_type_row, text="☁️ Dropbox Folder", variable=self.finder_source_type,
+                        value="dropbox", command=self._toggle_finder_source).pack(side=tk.LEFT)
+
+        # Container that switches between local source frame and Dropbox source frame
+        self._finder_source_container = ttk.Frame(folders_frame)
+        self._finder_source_container.pack(fill=tk.X, pady=(0, 5), padx=(0, 15))
+
+        # Local source folder (shown by default)
+        self.finder_local_source_frame = ttk.LabelFrame(self._finder_source_container, text="Source Folder", padding="8")
+        self.finder_local_source_frame.pack(fill=tk.X)
+
+        source_entry = ttk.Entry(self.finder_local_source_frame, textvariable=self.finder_source, width=55)
         source_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
-        
-        source_btn = ttk.Button(source_frame, text="📁 Browse", command=self.browse_finder_source)
+
+        source_btn = ttk.Button(self.finder_local_source_frame, text="📁 Browse", command=self.browse_finder_source)
         source_btn.pack(side=tk.RIGHT)
+
+        # Dropbox source (hidden until Dropbox radio selected)
+        self.finder_dropbox_source_frame = ttk.LabelFrame(self._finder_source_container, text="☁️ Dropbox Source", padding="8")
+        # Not packed yet — shown by _toggle_finder_source
+
+        # Row 1: Connect + status + folder dropdown
+        _dbx_r1 = ttk.Frame(self.finder_dropbox_source_frame)
+        _dbx_r1.pack(fill=tk.X, pady=(0, 4))
+        self.dropbox_connect_btn = ttk.Button(_dbx_r1, text="🔗 Connect", command=self._connect_dropbox)
+        self.dropbox_connect_btn.pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Label(_dbx_r1, textvariable=self.dropbox_status_var,
+                  font=("Segoe UI", 9, "italic"), foreground="gray").pack(side=tk.LEFT, padx=(0, 12))
+        ttk.Label(_dbx_r1, text="Folder:").pack(side=tk.LEFT, padx=(4, 2))
+        self.dropbox_folder_combo = ttk.Combobox(_dbx_r1, textvariable=self.dropbox_folder_var,
+                                                  width=30, state="normal")
+        self.dropbox_folder_combo.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 4))
+        ttk.Button(_dbx_r1, text="🔄", width=3,
+                   command=self._refresh_dropbox_folders).pack(side=tk.LEFT)
         
         # Destination folder selection
         dest_frame = ttk.LabelFrame(folders_frame, text="Destination Folder", padding="8")
@@ -4257,11 +4023,7 @@ class AuthExtractorApp:
         bulk_btn = ttk.Button(entry_frame, text="📋 Bulk Import", command=self.bulk_import_finder)
         bulk_btn.pack(side=tk.LEFT, padx=5)
         
-        # Auth type legend
-        legend = ttk.Label(entry_frame, 
-            text="Unskilled=Unskilled/Escort Assistance | Skilled=Skilled",
-            font=("Segoe UI", 8), foreground="gray")
-        legend.pack(side=tk.RIGHT)
+
         
         # Table (Treeview) for criteria
         table_frame = ttk.Frame(self.search_criteria_frame)
@@ -4362,6 +4124,232 @@ class AuthExtractorApp:
         # Show criteria view by default
         self.search_criteria_frame.pack(fill=tk.BOTH, expand=True)
 
+    def _toggle_finder_source(self):
+        """Toggle between local folder and Dropbox source in File Finder."""
+        if self.finder_source_type.get() == "dropbox":
+            self.finder_local_source_frame.pack_forget()
+            self.finder_dropbox_source_frame.pack(fill=tk.X)
+        else:
+            self.finder_dropbox_source_frame.pack_forget()
+            self.finder_local_source_frame.pack(fill=tk.X)
+
+    def _auto_unlock_pdf(self, pdf_path):
+        """Automatically decrypt a PDF in place if it's encrypted. Non-fatal on failure."""
+        if not pdf_path.lower().endswith(".pdf"):
+            return
+        try:
+            from services.pdf_unlock_service import PdfUnlockService
+            unlock = PdfUnlockService()
+            unlocked_path, was_encrypted = unlock.unlock(pdf_path)
+            if was_encrypted:
+                import shutil as _shutil
+                _shutil.move(unlocked_path, pdf_path)
+                self.finder_log_msg(f"      🔓 Decrypted: {os.path.basename(pdf_path)}")
+        except Exception:
+            pass  # Non-fatal — keep the file as-is
+
+    def _run_finder_from_dropbox(self):
+        """Run the File Finder using Dropbox as the source, downloading matches to destination."""
+        if not self.dropbox_service or not self.dropbox_service.is_connected:
+            messagebox.showerror("Error", "Connect to Dropbox first using the 🔗 Connect button.")
+            return
+
+        dest = self.finder_dest.get()
+        if not dest:
+            messagebox.showerror("Error", "Please select a destination folder.")
+            return
+
+        criteria = []
+        for item in self.finder_table.get_children():
+            values = self.finder_table.item(item, 'values')
+            criteria.append((values[0], values[1], values[3] if len(values) > 3 else ""))
+
+        # Parse the shared Date Range Filter (MM/DD/YYYY)
+        date_from_str = self.finder_date_from.get().strip()
+        date_to_str = self.finder_date_to.get().strip()
+        from_date = None
+        to_date = None
+
+        if date_from_str:
+            try:
+                from_date = datetime.strptime(date_from_str, "%m/%d/%Y").date()
+            except ValueError:
+                messagebox.showerror("Error", f"Invalid 'From' date format: {date_from_str}\nUse MM/DD/YYYY")
+                return
+
+        if date_to_str:
+            try:
+                to_date = datetime.strptime(date_to_str, "%m/%d/%Y").date()
+            except ValueError:
+                messagebox.showerror("Error", f"Invalid 'To' date format: {date_to_str}\nUse MM/DD/YYYY")
+                return
+
+        if not criteria and not from_date and not to_date:
+            messagebox.showerror("Error",
+                "Please add patient names to the criteria table, set a date range, or both.")
+            return
+
+        self.finder_status_var.set("Listing Dropbox files...")
+        self.root.update_idletasks()
+
+        # List files from Dropbox, apply date range + keyword filters
+        try:
+            folder = self.dropbox_folder_var.get().strip()
+            all_files = self.dropbox_service.list_supported_files(folder)
+
+            if from_date or to_date:
+                filtered = []
+                for m in all_files:
+                    mod = getattr(m, 'server_modified', None) or getattr(m, 'client_modified', None)
+                    if mod is None:
+                        continue
+                    # Dropbox returns timezone-aware UTC datetimes; strip tz before
+                    # extracting date so it compares cleanly against our naive dates.
+                    if hasattr(mod, 'tzinfo') and mod.tzinfo is not None:
+                        mod = mod.replace(tzinfo=None)
+                    mod_date = mod.date() if hasattr(mod, 'date') else mod
+                    if from_date and mod_date < from_date:
+                        continue
+                    if to_date and mod_date > to_date:
+                        continue
+                    filtered.append(m)
+                self.finder_log_msg(f"   📅 Date range → {len(filtered)} of {len(all_files)} files")
+                all_files = filtered
+
+            self.finder_log_msg(f"☁️  {len(all_files)} Dropbox files after filters.")
+        except Exception as e:
+            messagebox.showerror("Dropbox Error", f"Failed to list files:\n{e}")
+            return
+
+        dest_path = pathlib.Path(dest)
+        dest_path.mkdir(parents=True, exist_ok=True)
+
+        found_matches = []
+        not_found_list = []
+        matched = 0
+
+        if not criteria:
+            # ── Date-range-only mode: download every file that passed the filters ──
+            self.finder_log_msg(f"   📥 Date-range mode: downloading {len(all_files)} files...")
+            for meta in all_files:
+                dest_file = dest_path / meta.name
+                if not dest_file.exists():
+                    try:
+                        self.finder_log_msg(f"   ⬇️  {meta.name}")
+                        self.dropbox_service.download_file(meta, str(dest_path))
+                        # Auto-unlock encrypted PDFs in place
+                        self._auto_unlock_pdf(str(dest_file))
+                        matched += 1
+                    except Exception as e:
+                        self.finder_log_msg(f"   ❌ Download failed {meta.name}: {e}")
+                        continue
+                else:
+                    matched += 1
+                found_matches.append((meta.name, "", meta.name, ""))
+            self.finder_duplicate_imports = []
+            self.finder_original_count = len(found_matches)
+        else:
+            # ── Name-matching mode (date range already applied to all_files above) ──
+            all_imports_by_key = {}
+            original_criteria_count = len(criteria)
+            for name, auth_type, last_dos in criteria:
+                key = (name.upper().strip(), auth_type.upper().strip())
+                all_imports_by_key.setdefault(key, []).append((name, auth_type, last_dos))
+
+            duplicate_import_entries = [e for entries in all_imports_by_key.values() for e in entries[1:]]
+            criteria_for_search = [(v[0][0], v[0][1], v[0][2]) for v in all_imports_by_key.values()]
+
+            self.finder_log_msg(f"   🔍 Matching {len(criteria_for_search)} patients against {len(all_files)} files...")
+
+            name_found_type_mismatch = []
+            not_found_at_all = []
+
+            for name, auth_type, last_dos in criteria_for_search:
+                name_lower = name.lower()
+                name_cleaned = re.sub(r'\s*\([^)]*\)\s*', ' ', name_lower)
+                name_parts = [p for p in name_cleaned.replace(",", " ").split() if len(p) > 2]
+
+                matching_files, name_only_matches = [], []
+
+                for meta in all_files:
+                    fn_lower = meta.name.lower()
+                    if name_parts:
+                        hits = sum(1 for p in name_parts if p in fn_lower)
+                        n_match = hits == len(name_parts) if len(name_parts) <= 2 else hits >= len(name_parts) - 1
+                    else:
+                        n_match = False
+
+                    if auth_type.lower() == "skilled":
+                        k_match = "skilled" in fn_lower and "unskilled" not in fn_lower
+                    elif auth_type.lower() == "escort":
+                        k_match = "escort" in fn_lower
+                    elif auth_type.lower() == "unskilled":
+                        k_match = "unskilled" in fn_lower
+                    else:
+                        k_match = False
+
+                    if n_match:
+                        mod = getattr(meta, 'server_modified', None) or getattr(meta, 'client_modified', None)
+                        if k_match:
+                            matching_files.append((meta, mod))
+                        else:
+                            found_type = ("Skilled" if "skilled" in fn_lower and "unskilled" not in fn_lower
+                                          else "Unskilled" if "unskilled" in fn_lower
+                                          else "Escort" if "escort" in fn_lower else "")
+                            if found_type:
+                                name_only_matches.append((meta, found_type))
+
+                key = (name.upper().strip(), auth_type.upper().strip())
+                all_for_name = all_imports_by_key.get(key, [(name, auth_type, last_dos)])
+
+                if matching_files:
+                    matching_files.sort(key=lambda x: x[1] if x[1] else datetime.min, reverse=True)
+                    best = matching_files[0][0]
+                    dest_file = dest_path / best.name
+                    if not dest_file.exists():
+                        try:
+                            self.finder_log_msg(f"   ⬇️  {best.name}")
+                            self.dropbox_service.download_file(best, str(dest_path))
+                            # Auto-unlock encrypted PDFs in place
+                            self._auto_unlock_pdf(str(dest_file))
+                            matched += 1
+                        except Exception as e:
+                            self.finder_log_msg(f"   ❌ Download failed {best.name}: {e}")
+                            for n, t, d in all_for_name:
+                                not_found_at_all.append((n, t, d))
+                            continue
+                    for n, t, d in all_for_name:
+                        found_matches.append((n, t, best.name, d))
+                elif name_only_matches:
+                    found_type = name_only_matches[0][1]
+                    for n, t, d in all_for_name:
+                        name_found_type_mismatch.append((n, t, found_type, d))
+                else:
+                    for n, t, d in all_for_name:
+                        not_found_at_all.append((n, t, d))
+
+            self.finder_duplicate_imports = duplicate_import_entries
+            self.finder_original_count = original_criteria_count
+            for n, wt, ft, d in name_found_type_mismatch:
+                not_found_list.append((n, wt, f"Type mismatch — wanted {wt}, found {ft}", d))
+            for n, t, d in not_found_at_all:
+                not_found_list.append((n, t, "Not found in Dropbox", d))
+
+        # Store results
+        self.finder_found_matches = found_matches
+        self.finder_not_found = not_found_list
+
+        if hasattr(self, 'finder_files_count_var'):
+            self.update_finder_files_count()
+
+        self.populate_finder_results()
+        self.finder_status_var.set(f"Done — {matched} files downloaded, {len(not_found_list)} not found")
+
+        messagebox.showinfo("Dropbox File Finder Complete",
+            f"Downloaded {matched} files to:\n{dest}\n\n"
+            f"Files found: {len(found_matches)}\n"
+            f"Not found: {len(not_found_list)}")
+
     def toggle_finder_view(self, view):
         """Toggle between search criteria view and results view."""
         self.finder_view_var.set(view)
@@ -4387,7 +4375,7 @@ class AuthExtractorApp:
             # Suggest output file name
             output_file = pathlib.Path(dest) / "Auth_Results_Combined.xlsx"
             self.output_file.set(str(output_file))
-        self.notebook.select(self.extractor_tab)
+        self.auth_notebook.select(self.extractor_tab)
     
     def populate_finder_results(self):
         """Populate the finder results view with current finder data."""
@@ -5234,883 +5222,6 @@ PACE Authorization Team""")
         self.queue_count_var.set(f"{queue_count} items in queue")
         self.invalid_count_var.set(f"{invalid_count} patients")
 
-    def setup_search_tab(self):
-        """Set up the Search tab UI for searching Authorizations and Patients side by side."""
-        main_frame = ttk.Frame(self.search_tab, padding="15")
-        main_frame.pack(fill=tk.BOTH, expand=True)
-        
-        # Description
-        desc_label = ttk.Label(
-            main_frame,
-            text="Search Caspio tables to find patient profiles and existing authorizations",
-            style='Desc.TLabel'
-        )
-        desc_label.pack(anchor=tk.W, pady=(0, 10))
-        
-        # Create paned window for side-by-side panels
-        paned = ttk.PanedWindow(main_frame, orient=tk.HORIZONTAL)
-        paned.pack(fill=tk.BOTH, expand=True, pady=5)
-        
-        # === LEFT SIDE: Authorizations Panel ===
-        auth_frame = ttk.LabelFrame(paned, text="Authorizations (a_Authorizations)", padding="10")
-        paned.add(auth_frame, weight=1)
-        
-        # Auth filter controls
-        auth_filter_frame = ttk.Frame(auth_frame)
-        auth_filter_frame.pack(fill=tk.X, pady=(0, 8))
-        
-        # Row 1: Field and Operator
-        auth_filter_row1 = ttk.Frame(auth_filter_frame)
-        auth_filter_row1.pack(fill=tk.X, pady=(0, 5))
-        
-        ttk.Label(auth_filter_row1, text="Field:", font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=(0, 5))
-        
-        # Field names must match actual Caspio a_Authorizations table columns
-        self.auth_search_field_var = tk.StringVar(value="Last_Name")
-        auth_field_options = ["Last_Name", "a_First_Name_", "Patient_ID", "Authorization_", "Auth_Start_Date", "Auth_Expire_Date"]
-        self.auth_field_combo = ttk.Combobox(auth_filter_row1, textvariable=self.auth_search_field_var, 
-                                              values=auth_field_options, state="readonly", width=18)
-        self.auth_field_combo.pack(side=tk.LEFT, padx=(0, 10))
-        
-        ttk.Label(auth_filter_row1, text="Operator:", font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=(0, 5))
-        
-        self.auth_operator_var = tk.StringVar(value="Contains")
-        operator_options = ["Equals", "Contains", "Starts With", "Ends With", "Not Equal", "Is Empty", "Is Not Empty"]
-        self.auth_operator_combo = ttk.Combobox(auth_filter_row1, textvariable=self.auth_operator_var, 
-                                                 values=operator_options, state="readonly", width=12)
-        self.auth_operator_combo.pack(side=tk.LEFT)
-        self.auth_operator_combo.bind("<<ComboboxSelected>>", self.on_auth_operator_change)
-        
-        # Row 2: Value and Search button
-        auth_filter_row2 = ttk.Frame(auth_filter_frame)
-        auth_filter_row2.pack(fill=tk.X)
-        
-        ttk.Label(auth_filter_row2, text="Value:", font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=(0, 5))
-        
-        self.search_auth_entry = ttk.Entry(auth_filter_row2, textvariable=self.search_auth_term_var, width=20)
-        self.search_auth_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
-        self.search_auth_entry.bind("<Return>", lambda e: self.run_auth_search())
-        
-        self.search_auth_btn = ttk.Button(
-            auth_filter_row2, 
-            text="🔍 Search", 
-            command=self.run_auth_search,
-            style='Action.TButton'
-        )
-        self.search_auth_btn.pack(side=tk.LEFT, padx=(0, 3))
-        
-        self.clear_auth_btn = ttk.Button(
-            auth_filter_row2, 
-            text="Clear", 
-            command=self.clear_auth_search,
-            width=5
-        )
-        self.clear_auth_btn.pack(side=tk.LEFT)
-        
-        # Authorizations treeview
-        auth_container = ttk.Frame(auth_frame)
-        auth_container.pack(fill=tk.BOTH, expand=True)
-        
-        # Define columns for authorizations - must match actual Caspio field names
-        self.search_auth_columns = [
-            "Last_Name", "a_First_Name_", "Patient_ID", "Authorization_", 
-            "Auth_Start_Date", "Auth_Expire_Date"
-        ]
-        self.search_auth_pk = "Authorization_ID"  # Primary key field for auth table
-        
-        # Display name mapping for friendlier column headers
-        self.auth_display_names = {
-            "Last_Name": "Last Name",
-            "a_First_Name_": "First Name",
-            "Patient_ID": "Patient ID",
-            "Authorization_": "Auth #",
-            "Auth_Start_Date": "Date Approved",
-            "Auth_Expire_Date": "Date Expired"
-        }
-        
-        self.search_auth_tree = ttk.Treeview(
-            auth_container, 
-            columns=self.search_auth_columns, 
-            show="headings", 
-            height=12
-        )
-        
-        # Configure authorization columns
-        auth_col_widths = {
-            "Last_Name": 100, "a_First_Name_": 90, "Patient_ID": 80, 
-            "Authorization_": 95, "Auth_Start_Date": 95, "Auth_Expire_Date": 105
-        }
-        for col in self.search_auth_columns:
-            display_name = self.auth_display_names.get(col, col.replace("_", " "))
-            self.search_auth_tree.heading(col, text=display_name)
-            self.search_auth_tree.column(col, width=auth_col_widths.get(col, 80), anchor=tk.W)
-        
-        # Scrollbars for auth tree
-        auth_scroll_y = ttk.Scrollbar(auth_container, orient=tk.VERTICAL, command=self.search_auth_tree.yview)
-        auth_scroll_x = ttk.Scrollbar(auth_container, orient=tk.HORIZONTAL, command=self.search_auth_tree.xview)
-        self.search_auth_tree.configure(yscrollcommand=auth_scroll_y.set, xscrollcommand=auth_scroll_x.set)
-        
-        self.search_auth_tree.grid(row=0, column=0, sticky="nsew")
-        auth_scroll_y.grid(row=0, column=1, sticky="ns")
-        auth_scroll_x.grid(row=1, column=0, sticky="ew")
-        
-        auth_container.grid_rowconfigure(0, weight=1)
-        auth_container.grid_columnconfigure(0, weight=1)
-        
-        # Double-click to edit
-        self.search_auth_tree.bind("<Double-1>", lambda e: self.edit_auth_record())
-        
-        # Auth bottom controls: Count and Action buttons
-        auth_bottom = ttk.Frame(auth_frame)
-        auth_bottom.pack(fill=tk.X, pady=(5, 0))
-        
-        self.search_auth_count_var = tk.StringVar(value="0 authorizations found")
-        ttk.Label(auth_bottom, textvariable=self.search_auth_count_var, 
-                  font=("Segoe UI", 9, "italic")).pack(side=tk.LEFT)
-        
-        # Action buttons
-        auth_btn_frame = ttk.Frame(auth_bottom)
-        auth_btn_frame.pack(side=tk.RIGHT)
-        
-        ttk.Button(auth_btn_frame, text="➕ Add", command=self.add_auth_record, width=7).pack(side=tk.LEFT, padx=2)
-        ttk.Button(auth_btn_frame, text="✏️ Edit", command=self.edit_auth_record, width=7).pack(side=tk.LEFT, padx=2)
-        ttk.Button(auth_btn_frame, text="🗑️ Delete", command=self.delete_auth_record, width=8).pack(side=tk.LEFT, padx=2)
-        
-        # === RIGHT SIDE: Patients Panel ===
-        patient_frame = ttk.LabelFrame(paned, text="Patients (a_Patient)", padding="10")
-        paned.add(patient_frame, weight=1)
-        
-        # Patient filter controls
-        patient_filter_frame = ttk.Frame(patient_frame)
-        patient_filter_frame.pack(fill=tk.X, pady=(0, 8))
-        
-        # Row 1: Field and Operator
-        patient_filter_row1 = ttk.Frame(patient_filter_frame)
-        patient_filter_row1.pack(fill=tk.X, pady=(0, 5))
-        
-        ttk.Label(patient_filter_row1, text="Field:", font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=(0, 5))
-        
-        self.patient_search_field_var = tk.StringVar(value="Box_2__Patient_Last_Name")
-        patient_field_options = ["Box_2__Patient_Last_Name", "Box_2__Patient_First_Name", "Concantenated_Patient_Name", "Patient_ID"]
-        self.patient_field_combo = ttk.Combobox(patient_filter_row1, textvariable=self.patient_search_field_var, 
-                                                 values=patient_field_options, state="readonly", width=22)
-        self.patient_field_combo.pack(side=tk.LEFT, padx=(0, 10))
-        
-        ttk.Label(patient_filter_row1, text="Operator:", font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=(0, 5))
-        
-        self.patient_operator_var = tk.StringVar(value="Contains")
-        self.patient_operator_combo = ttk.Combobox(patient_filter_row1, textvariable=self.patient_operator_var, 
-                                                    values=operator_options, state="readonly", width=12)
-        self.patient_operator_combo.pack(side=tk.LEFT)
-        self.patient_operator_combo.bind("<<ComboboxSelected>>", self.on_patient_operator_change)
-        
-        # Row 2: Value and Search button
-        patient_filter_row2 = ttk.Frame(patient_filter_frame)
-        patient_filter_row2.pack(fill=tk.X)
-        
-        ttk.Label(patient_filter_row2, text="Value:", font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=(0, 5))
-        
-        self.search_patient_entry = ttk.Entry(patient_filter_row2, textvariable=self.search_patient_term_var, width=20)
-        self.search_patient_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
-        self.search_patient_entry.bind("<Return>", lambda e: self.run_patient_search())
-        
-        self.search_patient_btn = ttk.Button(
-            patient_filter_row2, 
-            text="🔍 Search", 
-            command=self.run_patient_search,
-            style='Action.TButton'
-        )
-        self.search_patient_btn.pack(side=tk.LEFT, padx=(0, 3))
-        
-        self.clear_patient_btn = ttk.Button(
-            patient_filter_row2, 
-            text="Clear", 
-            command=self.clear_patient_search,
-            width=5
-        )
-        self.clear_patient_btn.pack(side=tk.LEFT)
-        
-        # Patients treeview
-        patient_container = ttk.Frame(patient_frame)
-        patient_container.pack(fill=tk.BOTH, expand=True)
-        
-        # Define columns for patients - display columns
-        self.search_patient_columns = [
-            "Box_2__Patient_Last_Name", "Box_2__Patient_First_Name", 
-            "Concantenated_Patient_Name", "Patient_ID"
-        ]
-        self.search_patient_pk = "Patient_ID"  # Primary key field for patient table
-        
-        self.search_patient_tree = ttk.Treeview(
-            patient_container, 
-            columns=self.search_patient_columns, 
-            show="headings", 
-            height=12
-        )
-        
-        # Configure patient columns with friendlier display names
-        patient_display_names = {
-            "Box_2__Patient_Last_Name": "Last Name",
-            "Box_2__Patient_First_Name": "First Name",
-            "Concantenated_Patient_Name": "Full Name",
-            "Patient_ID": "Patient ID"
-        }
-        patient_col_widths = {
-            "Box_2__Patient_Last_Name": 110, "Box_2__Patient_First_Name": 100,
-            "Concantenated_Patient_Name": 180, "Patient_ID": 90
-        }
-        for col in self.search_patient_columns:
-            display_name = patient_display_names.get(col, col.replace("_", " "))
-            self.search_patient_tree.heading(col, text=display_name)
-            self.search_patient_tree.column(col, width=patient_col_widths.get(col, 100), anchor=tk.W)
-        
-        # Scrollbars for patient tree
-        patient_scroll_y = ttk.Scrollbar(patient_container, orient=tk.VERTICAL, command=self.search_patient_tree.yview)
-        patient_scroll_x = ttk.Scrollbar(patient_container, orient=tk.HORIZONTAL, command=self.search_patient_tree.xview)
-        self.search_patient_tree.configure(yscrollcommand=patient_scroll_y.set, xscrollcommand=patient_scroll_x.set)
-        
-        self.search_patient_tree.grid(row=0, column=0, sticky="nsew")
-        patient_scroll_y.grid(row=0, column=1, sticky="ns")
-        patient_scroll_x.grid(row=1, column=0, sticky="ew")
-        
-        patient_container.grid_rowconfigure(0, weight=1)
-        patient_container.grid_columnconfigure(0, weight=1)
-        
-        # Double-click to edit
-        self.search_patient_tree.bind("<Double-1>", lambda e: self.edit_patient_record())
-        
-        # Patient bottom controls: Count and Action buttons
-        patient_bottom = ttk.Frame(patient_frame)
-        patient_bottom.pack(fill=tk.X, pady=(5, 0))
-        
-        self.search_patient_count_var = tk.StringVar(value="0 patients found")
-        ttk.Label(patient_bottom, textvariable=self.search_patient_count_var, 
-                  font=("Segoe UI", 9, "italic")).pack(side=tk.LEFT)
-        
-        # Action buttons
-        patient_btn_frame = ttk.Frame(patient_bottom)
-        patient_btn_frame.pack(side=tk.RIGHT)
-        
-        ttk.Button(patient_btn_frame, text="➕ Add", command=self.add_patient_record, width=7).pack(side=tk.LEFT, padx=2)
-        ttk.Button(patient_btn_frame, text="✏️ Edit", command=self.edit_patient_record, width=7).pack(side=tk.LEFT, padx=2)
-        ttk.Button(patient_btn_frame, text="🗑️ Delete", command=self.delete_patient_record, width=8).pack(side=tk.LEFT, padx=2)
-        
-        # Status bar at bottom
-        self.search_status_var = tk.StringVar(value="Select a field, operator, and enter a value to search")
-        status_bar = ttk.Label(main_frame, textvariable=self.search_status_var, relief=tk.SUNKEN, anchor=tk.W)
-        status_bar.pack(fill=tk.X, pady=(5, 0))
-    
-    def on_auth_operator_change(self, event=None):
-        """Handle operator change for auth search - disable value entry for Is Empty/Is Not Empty."""
-        op = self.auth_operator_var.get()
-        if op in ("Is Empty", "Is Not Empty"):
-            self.search_auth_entry.configure(state='disabled')
-            self.search_auth_term_var.set("")
-        else:
-            self.search_auth_entry.configure(state='normal')
-    
-    def on_patient_operator_change(self, event=None):
-        """Handle operator change for patient search - disable value entry for Is Empty/Is Not Empty."""
-        op = self.patient_operator_var.get()
-        if op in ("Is Empty", "Is Not Empty"):
-            self.search_patient_entry.configure(state='disabled')
-            self.search_patient_term_var.set("")
-        else:
-            self.search_patient_entry.configure(state='normal')
-    
-    def _operator_to_api(self, operator):
-        """Convert UI operator name to API operator string."""
-        mapping = {
-            "Equals": "equals",
-            "Contains": "contains",
-            "Starts With": "starts_with",
-            "Ends With": "ends_with",
-            "Not Equal": "not_equal",
-            "Is Empty": "is_empty",
-            "Is Not Empty": "is_not_empty"
-        }
-        return mapping.get(operator, "contains")
-    
-    def run_auth_search(self):
-        """Execute search against the Authorizations table using selected field and operator."""
-        field = self.auth_search_field_var.get()
-        operator = self.auth_operator_var.get()
-        value = self.search_auth_term_var.get().strip()
-        
-        # For Is Empty / Is Not Empty, value is not needed
-        if operator not in ("Is Empty", "Is Not Empty"):
-            if not value:
-                messagebox.showwarning("Warning", "Please enter a search value")
-                return
-            if len(value) < 2:
-                messagebox.showwarning("Warning", "Please enter at least 2 characters")
-                return
-        
-        self.search_status_var.set(f"Searching authorizations: {field} {operator} '{value}'...")
-        self.search_auth_btn.configure(state='disabled')
-        self.root.update_idletasks()
-        
-        api_operator = self._operator_to_api(operator)
-        
-        def search_thread():
-            try:
-                caspio = CaspioAPI()
-                # Include PK_ID in select so we can edit/delete
-                select_fields = [self.search_auth_pk] + self.search_auth_columns
-                auth_results = caspio.search_with_operator(
-                    "a_Authorizations",
-                    field,
-                    api_operator,
-                    value,
-                    select_fields=select_fields
-                )
-                self.root.after(0, lambda: self.update_auth_results(auth_results))
-            except Exception as e:
-                self.root.after(0, lambda: self.auth_search_error(str(e)))
-        
-        Thread(target=search_thread, daemon=True).start()
-    
-    def run_patient_search(self):
-        """Execute search against the Patient table using selected field and operator."""
-        field = self.patient_search_field_var.get()
-        operator = self.patient_operator_var.get()
-        value = self.search_patient_term_var.get().strip()
-        
-        # For Is Empty / Is Not Empty, value is not needed
-        if operator not in ("Is Empty", "Is Not Empty"):
-            if not value:
-                messagebox.showwarning("Warning", "Please enter a search value")
-                return
-            if len(value) < 2:
-                messagebox.showwarning("Warning", "Please enter at least 2 characters")
-                return
-        
-        self.search_status_var.set(f"Searching patients: {field} {operator} '{value}'...")
-        self.search_patient_btn.configure(state='disabled')
-        self.root.update_idletasks()
-        
-        api_operator = self._operator_to_api(operator)
-        
-        def search_thread():
-            try:
-                caspio = CaspioAPI()
-                # Include PK_ID in select so we can edit/delete
-                select_fields = [self.search_patient_pk] + self.search_patient_columns
-                patient_results = caspio.search_with_operator(
-                    "a_Patient",
-                    field,
-                    api_operator,
-                    value,
-                    select_fields=select_fields
-                )
-                self.root.after(0, lambda: self.update_patient_results(patient_results))
-            except Exception as e:
-                self.root.after(0, lambda: self.patient_search_error(str(e)))
-        
-        Thread(target=search_thread, daemon=True).start()
-    
-    def update_auth_results(self, auth_results):
-        """Update the authorization search results treeview."""
-        # Clear existing results
-        for item in self.search_auth_tree.get_children():
-            self.search_auth_tree.delete(item)
-        
-        # Populate authorizations
-        self.search_auths_results = auth_results
-        for record in auth_results:
-            values = [record.get(col, "") or "" for col in self.search_auth_columns]
-            self.search_auth_tree.insert("", tk.END, values=values)
-        
-        # Update count
-        self.search_auth_count_var.set(f"{len(auth_results)} authorization(s) found")
-        self.search_status_var.set(f"Authorization search complete: {len(auth_results)} found")
-        self.search_auth_btn.configure(state='normal')
-    
-    def update_patient_results(self, patient_results):
-        """Update the patient search results treeview."""
-        # Clear existing results
-        for item in self.search_patient_tree.get_children():
-            self.search_patient_tree.delete(item)
-        
-        # Populate patients
-        self.search_patients_results = patient_results
-        for record in patient_results:
-            values = [record.get(col, "") or "" for col in self.search_patient_columns]
-            self.search_patient_tree.insert("", tk.END, values=values)
-        
-        # Update count
-        self.search_patient_count_var.set(f"{len(patient_results)} patient(s) found")
-        self.search_status_var.set(f"Patient search complete: {len(patient_results)} found")
-        self.search_patient_btn.configure(state='normal')
-    
-    def auth_search_error(self, error_msg):
-        """Handle authorization search errors."""
-        self.search_status_var.set(f"Auth search error: {error_msg}")
-        self.search_auth_btn.configure(state='normal')
-        messagebox.showerror("Search Error", f"Failed to search authorizations:\n\n{error_msg}")
-    
-    def patient_search_error(self, error_msg):
-        """Handle patient search errors."""
-        self.search_status_var.set(f"Patient search error: {error_msg}")
-        self.search_patient_btn.configure(state='normal')
-        messagebox.showerror("Search Error", f"Failed to search patients:\n\n{error_msg}")
-    
-    def clear_auth_search(self):
-        """Clear authorization search results."""
-        self.search_auth_term_var.set("")
-        for item in self.search_auth_tree.get_children():
-            self.search_auth_tree.delete(item)
-        self.search_auths_results = []
-        self.search_auth_count_var.set("0 authorizations found")
-        self.search_status_var.set("Authorization results cleared")
-    
-    def clear_patient_search(self):
-        """Clear patient search results."""
-        self.search_patient_term_var.set("")
-        for item in self.search_patient_tree.get_children():
-            self.search_patient_tree.delete(item)
-        self.search_patients_results = []
-        self.search_patient_count_var.set("0 patients found")
-        self.search_status_var.set("Patient results cleared")
-    
-    # ===== Edit/Add/Delete Record Functions =====
-    
-    def _get_selected_auth_record(self):
-        """Get the selected authorization record and its index."""
-        selection = self.search_auth_tree.selection()
-        if not selection:
-            return None, None
-        
-        item = selection[0]
-        idx = self.search_auth_tree.index(item)
-        if idx < len(self.search_auths_results):
-            return self.search_auths_results[idx], idx
-        return None, None
-    
-    def _get_selected_patient_record(self):
-        """Get the selected patient record and its index."""
-        selection = self.search_patient_tree.selection()
-        if not selection:
-            return None, None
-        
-        item = selection[0]
-        idx = self.search_patient_tree.index(item)
-        if idx < len(self.search_patients_results):
-            return self.search_patients_results[idx], idx
-        return None, None
-    
-    def edit_auth_record(self):
-        """Edit the selected authorization record."""
-        record, idx = self._get_selected_auth_record()
-        if not record:
-            messagebox.showwarning("Warning", "Please select an authorization to edit")
-            return
-        
-        pk_value = record.get(self.search_auth_pk)
-        if not pk_value:
-            messagebox.showerror("Error", "Cannot edit: record has no primary key")
-            return
-        
-        # Show edit dialog - pass None for fields to fetch all from schema
-        self._show_edit_dialog(
-            "Edit Authorization",
-            "a_Authorizations",
-            self.search_auth_pk,
-            pk_value,
-            record,
-            None,  # Will fetch all fields from table schema
-            self.run_auth_search  # Refresh callback
-        )
-    
-    def edit_patient_record(self):
-        """Edit the selected patient record."""
-        record, idx = self._get_selected_patient_record()
-        if not record:
-            messagebox.showwarning("Warning", "Please select a patient to edit")
-            return
-        
-        pk_value = record.get(self.search_patient_pk)
-        if not pk_value:
-            messagebox.showerror("Error", "Cannot edit: record has no primary key")
-            return
-        
-        # Show edit dialog - pass None for fields to fetch all from schema
-        self._show_edit_dialog(
-            "Edit Patient",
-            "a_Patient",
-            self.search_patient_pk,
-            pk_value,
-            record,
-            None,  # Will fetch all fields from table schema
-            self.run_patient_search  # Refresh callback
-        )
-    
-    def _show_edit_dialog(self, title, table_name, pk_field, pk_value, record, fields, refresh_callback):
-        """Show a dialog to edit a record. If fields is None, fetches all fields from table schema."""
-        dialog = tk.Toplevel(self.root)
-        dialog.title(title)
-        dialog.transient(self.root)
-        dialog.grab_set()
-        
-        # Center dialog - larger to accommodate all fields
-        dialog.geometry("600x600")
-        dialog.resizable(True, True)
-        
-        # Apply dark theme
-        dialog.configure(bg='#1a1d21')
-        
-        # Fetch all fields from table schema if not provided
-        if fields is None:
-            try:
-                caspio = CaspioAPI()
-                schema = caspio.get_table_schema(table_name)
-                fields = [f["name"] for f in schema]
-                readonly_fields = {f["name"] for f in schema if f.get("readonly", False)}
-            except Exception as e:
-                messagebox.showerror("Error", f"Failed to fetch table schema:\n{e}")
-                dialog.destroy()
-                return
-        else:
-            readonly_fields = set()
-        
-        # We also need the full record data - fetch it if we only have display columns
-        if record and pk_value:
-            try:
-                caspio = CaspioAPI()
-                # Fetch the full record
-                import urllib.parse
-                where_clause = f"{pk_field}='{pk_value}'"
-                encoded_where = urllib.parse.quote(where_clause)
-                url = f"{caspio.base_url}/tables/{table_name}/records?q.where={encoded_where}"
-                headers = {
-                    "Authorization": f"Bearer {caspio.get_access_token()}",
-                    "Content-Type": "application/json"
-                }
-                response = requests.get(url, headers=headers)
-                if response.status_code == 200:
-                    data = response.json()
-                    results = data.get("Result", [])
-                    if results:
-                        record = results[0]  # Use the full record
-            except Exception as e:
-                pass  # Continue with partial record
-        
-        # Create scrollable frame for fields
-        canvas = tk.Canvas(dialog, bg='#1a1d21', highlightthickness=0)
-        scrollbar = ttk.Scrollbar(dialog, orient="vertical", command=canvas.yview)
-        scrollable_frame = ttk.Frame(canvas)
-        
-        scrollable_frame.bind(
-            "<Configure>",
-            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
-        )
-        
-        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
-        canvas.configure(yscrollcommand=scrollbar.set)
-        
-        canvas.pack(side="left", fill="both", expand=True, padx=10, pady=10)
-        scrollbar.pack(side="right", fill="y")
-        
-        # Enable mousewheel scrolling
-        def _on_mousewheel(event):
-            canvas.yview_scroll(int(-1*(event.delta/120)), "units")
-        canvas.bind_all("<MouseWheel>", _on_mousewheel)
-        
-        # Entry variables
-        entries = {}
-        
-        for i, field in enumerate(fields):
-            frame = ttk.Frame(scrollable_frame)
-            frame.pack(fill=tk.X, pady=3, padx=5)
-            
-            # Display friendly field name
-            display_name = field.replace("_", " ").replace("Box 2  Patient", "").strip()
-            is_readonly = field in readonly_fields or field == pk_field
-            
-            label_text = f"{display_name}:" + (" (read-only)" if is_readonly else "")
-            ttk.Label(frame, text=label_text, width=28, anchor='e').pack(side=tk.LEFT, padx=(0, 10))
-            
-            var = tk.StringVar(value=str(record.get(field, "") or ""))
-            entry = ttk.Entry(frame, textvariable=var, width=45)
-            entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
-            
-            if is_readonly:
-                entry.configure(state='disabled')
-            else:
-                entries[field] = var
-        
-        # Unbind mousewheel when dialog closes
-        def on_close():
-            canvas.unbind_all("<MouseWheel>")
-            dialog.destroy()
-        
-        dialog.protocol("WM_DELETE_WINDOW", on_close)
-        
-        # Buttons frame
-        btn_frame = ttk.Frame(dialog)
-        btn_frame.pack(fill=tk.X, pady=10, padx=10)
-        
-        def save_changes():
-            # Collect updated values
-            updates = {}
-            for field, var in entries.items():
-                new_val = var.get().strip()
-                old_val = str(record.get(field, "") or "")
-                if new_val != old_val:
-                    updates[field] = new_val
-            
-            if not updates:
-                messagebox.showinfo("Info", "No changes to save")
-                on_close()
-                return
-            
-            # Update in Caspio
-            self.search_status_var.set("Saving changes to Caspio...")
-            dialog.update_idletasks()
-            
-            def update_thread():
-                try:
-                    caspio = CaspioAPI()
-                    result = caspio.update_record(table_name, pk_field, pk_value, updates)
-                    
-                    if result["success"]:
-                        self.root.after(0, lambda: self._on_edit_success_cleanup(on_close, refresh_callback))
-                    else:
-                        self.root.after(0, lambda: self._on_edit_error(result["message"]))
-                except Exception as e:
-                    self.root.after(0, lambda: self._on_edit_error(str(e)))
-            
-            Thread(target=update_thread, daemon=True).start()
-        
-        ttk.Button(btn_frame, text="💾 Save Changes", command=save_changes, style='Action.TButton').pack(side=tk.RIGHT, padx=5)
-        ttk.Button(btn_frame, text="Cancel", command=on_close).pack(side=tk.RIGHT, padx=5)
-    
-    def _on_edit_success_cleanup(self, cleanup_fn, refresh_callback):
-        """Handle successful edit with cleanup."""
-        cleanup_fn()
-        messagebox.showinfo("Success", "Record updated successfully in Caspio")
-        self.search_status_var.set("Record updated successfully")
-        refresh_callback()
-    
-    def _on_edit_error(self, error_msg):
-        """Handle edit error."""
-        messagebox.showerror("Update Error", f"Failed to update record:\n\n{error_msg}")
-        self.search_status_var.set(f"Update failed: {error_msg}")
-    
-    def add_auth_record(self):
-        """Add a new authorization record."""
-        self._show_add_dialog(
-            "Add Authorization",
-            "a_Authorizations",
-            None,  # Will fetch all fields from table schema
-            self.run_auth_search
-        )
-    
-    def add_patient_record(self):
-        """Add a new patient record."""
-        self._show_add_dialog(
-            "Add Patient",
-            "a_Patient",
-            None,  # Will fetch all fields from table schema
-            self.run_patient_search
-        )
-    
-    def _show_add_dialog(self, title, table_name, fields, refresh_callback):
-        """Show a dialog to add a new record. If fields is None, fetches all fields from table schema."""
-        dialog = tk.Toplevel(self.root)
-        dialog.title(title)
-        dialog.transient(self.root)
-        dialog.grab_set()
-        
-        dialog.geometry("600x600")
-        dialog.resizable(True, True)
-        dialog.configure(bg='#1a1d21')
-        
-        # Fetch all fields from table schema if not provided
-        if fields is None:
-            try:
-                caspio = CaspioAPI()
-                schema = caspio.get_table_schema(table_name)
-                # Exclude auto-generated fields for adding
-                fields = [f["name"] for f in schema if not f.get("readonly", False)]
-                readonly_fields = {f["name"] for f in schema if f.get("readonly", False)}
-            except Exception as e:
-                messagebox.showerror("Error", f"Failed to fetch table schema:\n{e}")
-                dialog.destroy()
-                return
-        else:
-            readonly_fields = set()
-        
-        # Create scrollable frame
-        canvas = tk.Canvas(dialog, bg='#1a1d21', highlightthickness=0)
-        scrollbar = ttk.Scrollbar(dialog, orient="vertical", command=canvas.yview)
-        scrollable_frame = ttk.Frame(canvas)
-        
-        scrollable_frame.bind(
-            "<Configure>",
-            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
-        )
-        
-        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
-        canvas.configure(yscrollcommand=scrollbar.set)
-        
-        canvas.pack(side="left", fill="both", expand=True, padx=10, pady=10)
-        scrollbar.pack(side="right", fill="y")
-        
-        # Enable mousewheel scrolling
-        def _on_mousewheel(event):
-            canvas.yview_scroll(int(-1*(event.delta/120)), "units")
-        canvas.bind_all("<MouseWheel>", _on_mousewheel)
-        
-        entries = {}
-        
-        for i, field in enumerate(fields):
-            if field in readonly_fields:
-                continue  # Skip read-only fields for add
-                
-            frame = ttk.Frame(scrollable_frame)
-            frame.pack(fill=tk.X, pady=3, padx=5)
-            
-            display_name = field.replace("_", " ").replace("Box 2  Patient", "").strip()
-            ttk.Label(frame, text=f"{display_name}:", width=28, anchor='e').pack(side=tk.LEFT, padx=(0, 10))
-            
-            var = tk.StringVar()
-            entry = ttk.Entry(frame, textvariable=var, width=45)
-            entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
-            entries[field] = var
-        
-        # Unbind mousewheel when dialog closes
-        def on_close():
-            canvas.unbind_all("<MouseWheel>")
-            dialog.destroy()
-        
-        dialog.protocol("WM_DELETE_WINDOW", on_close)
-        
-        btn_frame = ttk.Frame(dialog)
-        btn_frame.pack(fill=tk.X, pady=10, padx=10)
-        
-        def add_record():
-            # Collect values
-            new_record = {}
-            for field, var in entries.items():
-                val = var.get().strip()
-                if val:
-                    new_record[field] = val
-            
-            if not new_record:
-                messagebox.showwarning("Warning", "Please enter at least one field value")
-                return
-            
-            self.search_status_var.set("Adding record to Caspio...")
-            dialog.update_idletasks()
-            
-            def insert_thread():
-                try:
-                    caspio = CaspioAPI()
-                    result = caspio.insert_single_record(table_name, new_record)
-                    
-                    if result["success"]:
-                        self.root.after(0, lambda: self._on_add_success(dialog, refresh_callback))
-                    else:
-                        self.root.after(0, lambda: self._on_add_error(result["message"]))
-                except Exception as e:
-                    self.root.after(0, lambda: self._on_add_error(str(e)))
-            
-            Thread(target=insert_thread, daemon=True).start()
-        
-        ttk.Button(btn_frame, text="➕ Add Record", command=add_record, style='Action.TButton').pack(side=tk.RIGHT, padx=5)
-        ttk.Button(btn_frame, text="Cancel", command=on_close).pack(side=tk.RIGHT, padx=5)
-    
-    def _on_add_success(self, dialog, refresh_callback):
-        """Handle successful add."""
-        try:
-            dialog.destroy()
-        except:
-            pass
-        messagebox.showinfo("Success", "Record added successfully to Caspio")
-        self.search_status_var.set("Record added successfully")
-        refresh_callback()
-    
-    def _on_add_error(self, error_msg):
-        """Handle add error."""
-        messagebox.showerror("Insert Error", f"Failed to add record:\n\n{error_msg}")
-        self.search_status_var.set(f"Add failed: {error_msg}")
-    
-    def delete_auth_record(self):
-        """Delete the selected authorization record."""
-        record, idx = self._get_selected_auth_record()
-        if not record:
-            messagebox.showwarning("Warning", "Please select an authorization to delete")
-            return
-        
-        pk_value = record.get(self.search_auth_pk)
-        if not pk_value:
-            messagebox.showerror("Error", "Cannot delete: record has no primary key")
-            return
-        
-        # Confirmation - use correct field names
-        name = f"{record.get('Last_Name', '')}, {record.get('a_First_Name_', '')}"
-        auth_num = record.get('Authorization_', '')
-        if not messagebox.askyesno("Confirm Delete", 
-            f"Are you sure you want to delete this authorization?\n\n"
-            f"Patient: {name}\nAuth #: {auth_num}\n\n"
-            f"This action cannot be undone!"):
-            return
-        
-        self._delete_record("a_Authorizations", self.search_auth_pk, pk_value, self.run_auth_search)
-    
-    def delete_patient_record(self):
-        """Delete the selected patient record."""
-        record, idx = self._get_selected_patient_record()
-        if not record:
-            messagebox.showwarning("Warning", "Please select a patient to delete")
-            return
-        
-        pk_value = record.get(self.search_patient_pk)
-        if not pk_value:
-            messagebox.showerror("Error", "Cannot delete: record has no primary key")
-            return
-        
-        # Confirmation
-        name = f"{record.get('Box_2__Patient_Last_Name', '')}, {record.get('Box_2__Patient_First_Name', '')}"
-        patient_id = record.get('Patient_ID', '')
-        if not messagebox.askyesno("Confirm Delete", 
-            f"Are you sure you want to delete this patient?\n\n"
-            f"Name: {name}\nPatient ID: {patient_id}\n\n"
-            f"This action cannot be undone!"):
-            return
-        
-        self._delete_record("a_Patient", self.search_patient_pk, pk_value, self.run_patient_search)
-    
-    def _delete_record(self, table_name, pk_field, pk_value, refresh_callback):
-        """Delete a record from Caspio."""
-        self.search_status_var.set("Deleting record from Caspio...")
-        self.root.update_idletasks()
-        
-        def delete_thread():
-            try:
-                caspio = CaspioAPI()
-                result = caspio.delete_record(table_name, pk_field, pk_value)
-                
-                if result["success"]:
-                    self.root.after(0, lambda: self._on_delete_success(refresh_callback))
-                else:
-                    self.root.after(0, lambda: self._on_delete_error(result["message"]))
-            except Exception as e:
-                self.root.after(0, lambda: self._on_delete_error(str(e)))
-        
-        Thread(target=delete_thread, daemon=True).start()
-    
-    def _on_delete_success(self, refresh_callback):
-        """Handle successful delete."""
-        messagebox.showinfo("Success", "Record deleted successfully from Caspio")
-        self.search_status_var.set("Record deleted successfully")
-        refresh_callback()
-    
-    def _on_delete_error(self, error_msg):
-        """Handle delete error."""
-        messagebox.showerror("Delete Error", f"Failed to delete record:\n\n{error_msg}")
-        self.search_status_var.set(f"Delete failed: {error_msg}")
     
     def browse_finder_source(self):
         """Browse for source folder."""
@@ -6452,6 +5563,11 @@ PACE Authorization Team""")
     
     def run_file_finder(self):
         """Run the file finder process."""
+        # Route to Dropbox handler if Dropbox source selected
+        if self.finder_source_type.get() == "dropbox":
+            self._run_finder_from_dropbox()
+            return
+
         source = self.finder_source.get()
         dest = self.finder_dest.get()
         
@@ -6664,6 +5780,8 @@ PACE Authorization Team""")
                 if dest_file not in copied_files:
                     try:
                         shutil.copy2(most_recent_pdf, dest_file)
+                        # Auto-unlock encrypted PDFs in place
+                        self._auto_unlock_pdf(str(dest_file))
                         copied_files.append(dest_file)
                         matched += 1
                     except Exception as e:
@@ -6814,8 +5932,8 @@ PACE Authorization Team""")
             return
         
         # Switch to extractor tab to show progress
-        self.notebook.select(self.extractor_tab)
-        
+        self.auth_notebook.select(self.extractor_tab)
+
         # Set the input/output paths
         self.input_folder.set(folder_path)
         self.output_file.set(output_file)
@@ -6840,17 +5958,20 @@ PACE Authorization Team""")
         try:
             self.log(f"📁 Scanning folder: {input_folder}")
             
-            # Count PDFs
-            pdf_count = len(list(pathlib.Path(input_folder).glob("*.pdf")))
-            self.log(f"📄 Found {pdf_count} PDF files")
+            # Count all supported files
+            from config import SUPPORTED_EXTENSIONS
+            folder = pathlib.Path(input_folder)
+            total_files = sum(len(list(folder.rglob(f"*{ext}"))) for ext in SUPPORTED_EXTENSIONS)
+            pdf_count = len(list(folder.rglob("*.pdf")))
+            self.log(f"📄 Found {total_files} supported files ({pdf_count} PDFs)")
             
-            if pdf_count == 0:
-                self.root.after(0, lambda: messagebox.showwarning("Warning", "No PDF files found in folder"))
+            if total_files == 0:
+                self.root.after(0, lambda: messagebox.showwarning("Warning", "No supported files found in folder"))
                 return
             
-            # Process PDFs
-            self.log("\n🔍 Extracting data from PDFs (this may take a while with OCR)...")
-            results = self.extractor.process_folder(
+            # Process all supported file types
+            self.log("\n🔍 Extracting data (routing each file to the best method)...")
+            results = self.extractor.process_all_files(
                 input_folder, 
                 progress_callback=lambda c, t, f: self.root.after(0, lambda: self.update_progress(c, t, f))
             )
@@ -6862,7 +5983,7 @@ PACE Authorization Team""")
             # Summary
             successful = len([r for r in results if "error" not in r])
             errors = len([r for r in results if "error" in r])
-            ocr_count = len([r for r in results if r.get("extraction_method") == "ocr"])
+            ocr_count = len([r for r in results if r.get("extraction_method") in ("ocr", "tesseract_image")])
             
             self.log(f"\n✅ Combined Export Complete!")
             self.log(f"   PDFs Processed: {successful}")
@@ -6887,8 +6008,9 @@ PACE Authorization Team""")
                 f"Output: {output_file}"))
             
         except Exception as e:
-            self.log(f"\n❌ Error: {str(e)}")
-            self.root.after(0, lambda: messagebox.showerror("Error", str(e)))
+            err_msg = str(e)
+            self.log(f"\n❌ Error: {err_msg}")
+            self.root.after(0, lambda m=err_msg: messagebox.showerror("Error", m))
         finally:
             self.is_processing = False
             self.root.after(0, lambda: self.extract_btn.config(state=tk.NORMAL))
@@ -7366,13 +6488,11 @@ PACE Authorization Team""")
     def update_source_selection(self):
         """Update UI based on source selection for extraction."""
         source_type = self.extract_source_type.get()
+        self.manual_folder_frame.pack_forget()
         if source_type == "finder":
-            # Hide manual folder selection
-            self.manual_folder_frame.pack_forget()
-            # Update count from finder results  
             self.update_finder_files_count()
         else:
-            # Show manual folder selection
+            # manual
             self.manual_folder_frame.pack(fill=tk.X, pady=(5, 0))
     
     def update_finder_files_count(self):
@@ -7501,6 +6621,249 @@ PACE Authorization Team""")
                 f"Successfully synced {count} patient names from Caspio.\n\n"
                 f"Patient names will now be matched against this list when extracting data.")
 
+    # ------------------------------------------------------------------
+    # Dropbox integration methods
+    # ------------------------------------------------------------------
+
+    def _connect_dropbox(self):
+        """Connect to Dropbox using credentials from .env."""
+        try:
+            from integrations.dropbox_service import DropboxService, DROPBOX_AVAILABLE
+            if not DROPBOX_AVAILABLE:
+                messagebox.showerror("Error",
+                    "The 'dropbox' package is not installed.\nRun: pip install dropbox")
+                return
+
+            from config import DROPBOX_APP_KEY, DROPBOX_REFRESH_TOKEN
+            if not DROPBOX_APP_KEY or not DROPBOX_REFRESH_TOKEN:
+                messagebox.showerror("Dropbox Setup Required",
+                    "Dropbox credentials not configured.\n\n"
+                    "1. Create a Dropbox app at:\n"
+                    "   https://www.dropbox.com/developers/apps\n\n"
+                    "2. Run this in a terminal to get a refresh token:\n"
+                    "   python -c \"from integrations.dropbox_service import "
+                    "run_dropbox_oauth_flow; run_dropbox_oauth_flow()\"\n\n"
+                    "3. Add DROPBOX_APP_KEY, DROPBOX_APP_SECRET,\n"
+                    "   and DROPBOX_REFRESH_TOKEN to your .env file.")
+                return
+
+            self.log("🔗 Connecting to Dropbox...")
+            self.dropbox_service = DropboxService()
+            self.dropbox_service.connect()
+
+            self.dropbox_status_var.set("✅ connected")
+            self.dropbox_connect_btn.configure(text="✅ Connected")
+            self.log("   ✅ Dropbox connected!")
+
+            # Auto-fill the folder if DROPBOX_ROOT_FOLDER is set
+            from config import DROPBOX_ROOT_FOLDER
+            if DROPBOX_ROOT_FOLDER and not self.dropbox_folder_var.get():
+                self.dropbox_folder_var.set(DROPBOX_ROOT_FOLDER)
+
+            # Populate folder dropdown
+            self._refresh_dropbox_folders()
+
+        except Exception as e:
+            self.dropbox_status_var.set("❌ error")
+            self.log(f"   ❌ Dropbox connection failed: {e}")
+            messagebox.showerror("Dropbox Error", str(e))
+
+    def _refresh_dropbox_folders(self):
+        """Populate the folder combobox with sub-folders from the Dropbox root."""
+        if not self.dropbox_service or not self.dropbox_service.is_connected:
+            return
+        try:
+            folders = self.dropbox_service.list_folders()
+            if hasattr(self, 'dropbox_folder_combo'):
+                self.dropbox_folder_combo['values'] = folders
+        except Exception as e:
+            self.log(f"   ⚠️ Could not list Dropbox folders: {e}")
+
+    def _list_dropbox_files(self):
+        """List supported files in the chosen Dropbox folder, with optional date filter."""
+        if not hasattr(self, 'dropbox_tree'):
+            return  # tree not present in current layout
+        if not self.dropbox_service or not self.dropbox_service.is_connected:
+            messagebox.showwarning("Warning", "Connect to Dropbox first.")
+            return
+
+        folder = self.dropbox_folder_var.get().strip()
+        self.log(f"☁️  Listing files in Dropbox: {folder or '/'}")
+
+        # Parse optional date filter
+        filter_date = None
+        date_str = self.dropbox_date_filter_var.get().strip()
+        if date_str:
+            try:
+                from datetime import datetime
+                filter_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+                self.log(f"   📅 Filtering: uploaded on or after {date_str}")
+            except ValueError:
+                messagebox.showwarning("Invalid Date", f"Date format must be YYYY-MM-DD (e.g. 2026-03-20).\nGot: {date_str}")
+                return
+
+        try:
+            all_files = self.dropbox_service.list_supported_files(folder)
+
+            # Apply date filter if set
+            if filter_date:
+                filtered = []
+                for meta in all_files:
+                    mod = getattr(meta, "server_modified", None) or getattr(meta, "client_modified", None)
+                    if mod and mod.date() >= filter_date:
+                        filtered.append(meta)
+                skipped = len(all_files) - len(filtered)
+                if skipped:
+                    self.log(f"   ⏭️  Skipped {skipped} files older than {date_str}")
+                all_files = filtered
+
+            # Apply keyword filter if set
+            keyword = self.dropbox_keyword_var.get().strip()
+            if keyword:
+                before_kw = len(all_files)
+                all_files = [m for m in all_files if keyword.lower() in m.name.lower()]
+                skipped_kw = before_kw - len(all_files)
+                if skipped_kw:
+                    self.log(f"   ⏭️  Skipped {skipped_kw} files not matching '{keyword}'")
+
+            # Apply patient name list filter if set
+            if self.dropbox_name_filter_list:
+                before_name = len(all_files)
+                all_files = [
+                    m for m in all_files
+                    if any(n.lower() in m.name.lower() for n in self.dropbox_name_filter_list)
+                ]
+                skipped_name = before_name - len(all_files)
+                if skipped_name:
+                    self.log(f"   ⏭️  Skipped {skipped_name} files not matching any of {len(self.dropbox_name_filter_list)} names")
+
+            self.dropbox_files = all_files
+
+            # Populate treeview
+            for row in self.dropbox_tree.get_children():
+                self.dropbox_tree.delete(row)
+
+            for meta in self.dropbox_files:
+                size_str = self._fmt_bytes(meta.size)
+                mod = getattr(meta, "server_modified", None) or getattr(meta, "client_modified", None)
+                mod_str = mod.strftime("%Y-%m-%d") if mod else ""
+                self.dropbox_tree.insert("", tk.END,
+                                         values=(meta.name, meta.path_display, mod_str, size_str))
+
+            count = len(self.dropbox_files)
+            status_parts = [f"✅ {count} files"]
+            if filter_date:
+                status_parts.append(f"from {date_str}")
+            if keyword:
+                status_parts.append(f"'{keyword}'")
+            if self.dropbox_name_filter_list:
+                status_parts.append(f"{len(self.dropbox_name_filter_list)} names")
+            self.dropbox_status_var.set(" | ".join(status_parts))
+            self.dropbox_status_var.set(" | ".join(status_parts))
+            self.log(f"   Found {count} supported files")
+
+            # Auto-set output file if not yet set
+            if not self.output_file.get():
+                default_output = pathlib.Path.cwd() / "Dropbox_Auth_Results.xlsx"
+                self.output_file.set(str(default_output))
+
+        except Exception as e:
+            self.log(f"   ❌ Error listing Dropbox files: {e}")
+            messagebox.showerror("Dropbox Error", str(e))
+
+    def _clear_name_filter(self):
+        """Clear the patient name filter list."""
+        self.dropbox_name_filter_list = []
+        self.dropbox_name_count_var.set("(none)")
+
+    def _open_name_filter_popup(self):
+        """Open a popup to manage the patient name filter list."""
+        popup = tk.Toplevel(self.root)
+        popup.title("Filter by Patient Names")
+        popup.geometry("480x500")
+        popup.transient(self.root)
+        popup.grab_set()
+        self.style_popup(popup)
+
+        popup.update_idletasks()
+        x = self.root.winfo_x() + (self.root.winfo_width() // 2) - 240
+        y = self.root.winfo_y() + (self.root.winfo_height() // 2) - 250
+        popup.geometry(f"+{x}+{y}")
+
+        frame = ttk.Frame(popup, padding="15")
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(frame, text="Patient Name Filter List",
+                  font=("Segoe UI", 13, "bold")).pack(anchor=tk.W, pady=(0, 4))
+        ttk.Label(frame,
+                  text="Only files containing at least one name below will be listed.\n"
+                       "One name per line. Partial / case-insensitive match.",
+                  font=("Segoe UI", 9), foreground="gray").pack(anchor=tk.W, pady=(0, 10))
+
+        # Text area
+        txt_frame = ttk.Frame(frame)
+        txt_frame.pack(fill=tk.BOTH, expand=True)
+        txt = tk.Text(txt_frame, font=("Consolas", 10), height=18,
+                      bg="#1E293B", fg="#E5E7EB", insertbackground="#E5E7EB",
+                      relief="solid", borderwidth=1, padx=6, pady=6)
+        sb = ttk.Scrollbar(txt_frame, orient=tk.VERTICAL, command=txt.yview)
+        txt.configure(yscrollcommand=sb.set)
+        txt.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        sb.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Pre-fill with existing names
+        if self.dropbox_name_filter_list:
+            txt.insert("1.0", "\n".join(self.dropbox_name_filter_list))
+
+        # Row count label
+        count_lbl = ttk.Label(frame, text="", font=("Segoe UI", 8), foreground="gray")
+        count_lbl.pack(anchor=tk.W, pady=(4, 0))
+
+        def _update_count(event=None):
+            names = [n.strip() for n in txt.get("1.0", tk.END).split("\n") if n.strip()]
+            count_lbl.config(text=f"{len(names)} name(s) entered")
+
+        txt.bind("<KeyRelease>", _update_count)
+        txt.bind("<<Paste>>", lambda e: popup.after(50, _update_count))
+        _update_count()
+
+        def apply():
+            raw = txt.get("1.0", tk.END)
+            names = [n.strip() for n in raw.split("\n") if n.strip()]
+            self.dropbox_name_filter_list = names
+            if names:
+                self.dropbox_name_count_var.set(f"{len(names)} name(s) active")
+            else:
+                self.dropbox_name_count_var.set("(none)")
+            popup.destroy()
+
+        btn_row = ttk.Frame(frame)
+        btn_row.pack(fill=tk.X, pady=(12, 0))
+        ttk.Button(btn_row, text="✅ Apply", command=apply,
+                   style="Action.TButton").pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(btn_row, text="🗑️ Clear All",
+                   command=lambda: txt.delete("1.0", tk.END)).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(btn_row, text="Cancel", command=popup.destroy).pack(side=tk.LEFT)
+
+        txt.focus_set()
+
+    def _log_dropbox_download(self, current, total, filename):
+        """Log callback for Dropbox download progress."""
+        self.status_text.set(f"Downloading {current}/{total}: {filename}")
+        self.log(f"   ⬇️  {current}/{total} {filename}")
+        pct = (current / total) * 30  # first 30% of progress bar = download
+        self.progress_bar["value"] = pct
+        self.root.update_idletasks()
+
+    @staticmethod
+    def _fmt_bytes(n):
+        """Format bytes as human-readable string."""
+        for unit in ("B", "KB", "MB", "GB"):
+            if abs(n) < 1024:
+                return f"{n:.0f} {unit}"
+            n /= 1024
+        return f"{n:.1f} TB"
+
     def start_extraction(self):
         """Start the extraction process."""
         if self.is_processing:
@@ -7515,6 +6878,16 @@ PACE Authorization Team""")
             if not input_folder:
                 messagebox.showerror("Error", "No File Finder destination set.\n\nRun File Finder first to find and copy PDFs,\nor select 'Select folder manually' option.")
                 return
+        elif source_type == "dropbox":
+            # Download Dropbox files to a temp folder, then extract from there
+            if not self.dropbox_service or not self.dropbox_service.is_connected:
+                messagebox.showerror("Error", "Not connected to Dropbox.\nClick 'Connect' first.")
+                return
+            if not self.dropbox_files:
+                messagebox.showerror("Error", "No Dropbox files listed.\nClick 'List Files' first.")
+                return
+            # Download will happen in the extraction thread
+            input_folder = "__dropbox__"  # sentinel value
         else:
             # Use manual folder selection
             input_folder = self.input_folder.get()
@@ -7528,7 +6901,7 @@ PACE Authorization Team""")
             messagebox.showerror("Error", "Please specify an output file")
             return
         
-        if not pathlib.Path(input_folder).exists():
+        if input_folder != "__dropbox__" and not pathlib.Path(input_folder).exists():
             messagebox.showerror("Error", "Input folder does not exist")
             return
         
@@ -7548,64 +6921,126 @@ PACE Authorization Team""")
     def run_extraction(self, input_folder, output_file):
         """Run extraction process (in separate thread)."""
         try:
+            # --- Dropbox download step ---
+            if input_folder == "__dropbox__":
+                self.log("☁️  Downloading files from Dropbox...")
+                try:
+                    downloaded = self.dropbox_service.download_files(
+                        self.dropbox_files,
+                        progress_callback=lambda c, t, f: self.root.after(
+                            0, lambda _c=c, _t=t, _f=f: self._log_dropbox_download(_c, _t, _f)),
+                    )
+                    if not downloaded:
+                        self.root.after(0, lambda: messagebox.showwarning("Warning", "No files downloaded from Dropbox"))
+                        return
+                    # Use the temp directory that contains downloaded files
+                    input_folder = self.dropbox_service._get_temp_dir()
+                    self.log(f"✅ Downloaded {len(downloaded)} files to temp folder")
+                except Exception as e:
+                    err_msg = str(e)
+                    self.log(f"❌ Dropbox download failed: {err_msg}")
+                    self.root.after(0, lambda m=err_msg: messagebox.showerror("Dropbox Error", m))
+                    return
+
             self.log(f"📁 Scanning folder: {input_folder}")
             
-            # Count PDFs
-            pdf_count = len(list(pathlib.Path(input_folder).glob("*.pdf")))
-            self.log(f"📄 Found {pdf_count} PDF files")
-            
-            if pdf_count == 0:
+            # Count PDF files
+            folder = pathlib.Path(input_folder)
+            pdf_files = sorted(folder.glob("*.pdf"))
+            total_files = len(pdf_files)
+
+            if total_files == 0:
                 self.root.after(0, lambda: messagebox.showwarning("Warning", "No PDF files found in folder"))
                 return
-            
-            # Process PDFs
-            self.log("\n🔍 Extracting data from PDFs (this may take a while with OCR)...")
-            results = self.extractor.process_folder(
-                input_folder, 
-                progress_callback=lambda c, t, f: self.root.after(0, lambda: self.update_progress(c, t, f))
+
+            self.log(f"   PDF files: {total_files}")
+
+            # --- Unlock PDFs ---
+            # Keep unlocked copies for manual review/upload (e.g., ChatGPT).
+            self.log("\n🔓 Unlocking PDFs...")
+            from services.pdf_unlock_service import PdfUnlockService
+            import shutil as _shutil
+
+            unlock_service = PdfUnlockService()
+            # Save unlocked PDFs to a "Unlocked" subfolder next to the output file
+            output_folder = str(pathlib.Path(output_file).parent / "Unlocked PDFs")
+            os.makedirs(output_folder, exist_ok=True)
+
+            successful = 0
+            errors = 0
+            for i, pdf_file in enumerate(pdf_files):
+                self.root.after(0, lambda c=i+1, t=total_files, f=pdf_file.name: self.update_progress(c, t, f))
+                try:
+                    unlocked_path, was_encrypted = unlock_service.unlock(str(pdf_file))
+                    dest_path = os.path.join(output_folder, pdf_file.name)
+                    if was_encrypted:
+                        _shutil.move(unlocked_path, dest_path)
+                        self.log(f"  🔓 Unlocked: {pdf_file.name}")
+                    else:
+                        _shutil.copy2(str(pdf_file), dest_path)
+                        self.log(f"  ✓ Copied (not encrypted): {pdf_file.name}")
+                    successful += 1
+                except Exception as ex:
+                    self.log(f"  ❌ Failed: {pdf_file.name} - {ex}")
+                    errors += 1
+
+            if successful == 0:
+                self.root.after(0, lambda: messagebox.showwarning("Warning", "No PDFs were unlocked/copied. Extraction cannot continue."))
+                return
+
+            self.log(f"\n✅ Unlock step complete")
+            self.log(f"   PDFs saved: {successful}")
+            self.log(f"   Unlock errors: {errors}")
+            self.log(f"   Unlocked folder: {output_folder}")
+
+            # --- Normal data extraction step ---
+            self.log("\n🔍 Extracting data from unlocked PDFs...")
+            results = self.extractor.process_all_files(
+                output_folder,
+                progress_callback=lambda c, t, f: self.root.after(0, lambda _c=c, _t=t, _f=f: self.update_progress(_c, _t, _f))
             )
+
+            self.log("\n📊 Exporting Excel workbook...")
+            self.extractor.export_to_excel(output_file)
+
+            # Load Review tab with latest results
+            if pd is not None:
+                try:
+                    df_formatted = pd.read_excel(output_file, sheet_name="Formatted")
+                except Exception:
+                    df_formatted = pd.DataFrame()
+                try:
+                    df_errors = pd.read_excel(output_file, sheet_name="Errors")
+                except Exception:
+                    df_errors = pd.DataFrame()
+                self.root.after(0, lambda dff=df_formatted, dfe=df_errors, tf=total_files: self.populate_results_table(dff, dfe, tf))
+
+            extracted_ok = len([r for r in results if not r.get("error")])
+            extracted_err = len([r for r in results if r.get("error")])
+
+            self.log(f"\n✅ Extraction complete!")
+            self.log(f"   Records extracted: {extracted_ok}")
+            self.log(f"   Extraction errors: {extracted_err}")
+            self.log(f"   Excel output: {output_file}")
             
-            # Export to Excel - use combined workbook to include Last DOS and highlighting
-            self.log(f"\n📊 Exporting to Excel: {output_file}")
-            formatted_df = self.export_combined_workbook(output_file)
+            self.root.after(0, lambda: self.status_text.set(f"Done! Extracted {extracted_ok} records"))
+            self.root.after(0, lambda: self.open_btn.config(state=tk.NORMAL))
+            self.root.after(0, lambda f=output_folder, out=output_file, s=successful, ue=errors, ok=extracted_ok, ee=extracted_err: messagebox.showinfo("Success", 
+                f"Extraction complete!\n\n"
+                f"Unlocked PDFs saved: {s}\n"
+                f"Unlock errors: {ue}\n"
+                f"Records extracted: {ok}\n"
+                f"Extraction errors: {ee}\n\n"
+                f"Unlocked folder:\n{f}\n\n"
+                f"Excel output:\n{out}"))
             
-            # Build errors DataFrame
-            error_records = [r for r in results if r.get("error")]
-            errors_df = pd.DataFrame(error_records) if error_records else None
-            
-            # Populate the in-app results table for review/editing (with errors)
-            if formatted_df is not None:
-                self.root.after(0, lambda df=formatted_df, err_df=errors_df, total=pdf_count: 
-                               self.populate_results_table(df, err_df, total))
-            
-            # Switch to Review & Edit tab
-            self.root.after(0, lambda: self.notebook.select(self.review_tab))
-            
-            # Summary
-            successful = len([r for r in results if "error" not in r])
-            errors = len([r for r in results if "error" in r])
-            ocr_count = len([r for r in results if r.get("extraction_method") == "ocr"])
-            
-            # Get patient name match stats
-            match_stats = getattr(self.extractor, 'last_match_stats', {"matched": 0, "not_matched": 0, "no_name": 0})
-            matched = match_stats.get("matched", 0)
-            not_matched = match_stats.get("not_matched", 0)
-            
-            self.log(f"\n✅ Complete!")
-            self.log(f"   Successful: {successful}")
-            self.log(f"   Used OCR: {ocr_count}")
-            self.log(f"   Errors: {errors}")
-            self.log(f"   Patient names found in Caspio: {matched}")
-            self.log(f"   Patient names NOT in Caspio: {not_matched}")
-            self.log(f"   Output: {output_file}")
-            
-            self.root.after(0, lambda: self.status_text.set(f"Done! Extracted {successful} files - see Review & Edit tab"))
-            self.root.after(0, lambda: messagebox.showinfo("Success", 
-                f"Extraction complete!\n\nProcessed: {pdf_count} files\nSuccessful: {successful}\nUsed OCR: {ocr_count}\nErrors: {errors}\n\nPatient names found in Caspio: {matched}\nPatient names NOT in Caspio: {not_matched}\n\nSwitching to Review & Edit tab to review and upload."))
+            # Open the output folder in Explorer
+            self.root.after(500, lambda f=output_folder: os.startfile(f) if os.path.isdir(f) else None)
             
         except Exception as e:
-            self.log(f"\n❌ Error: {str(e)}")
-            self.root.after(0, lambda: messagebox.showerror("Error", str(e)))
+            err_msg = str(e)
+            self.log(f"\n❌ Error: {err_msg}")
+            self.root.after(0, lambda m=err_msg: messagebox.showerror("Error", m))
         finally:
             self.is_processing = False
             self.root.after(0, lambda: self.extract_btn.config(state=tk.NORMAL))
@@ -7938,6 +7373,20 @@ PACE Authorization Team""")
                 caspio = CaspioAPI()
                 results = caspio.insert_records(CASPIO_TABLE_NAME, caspio_records)
                 
+                # Audit log the upload
+                try:
+                    from audit.logger import AuditLogger
+                    audit = AuditLogger()
+                    audit.log_upload(
+                        source_file=f"batch_{len(caspio_records)}_records",
+                        table_name=CASPIO_TABLE_NAME,
+                        record_count=results['success'],
+                        status="success" if results['failed'] == 0 else "partial",
+                        error="; ".join(results.get('errors', [])[:3]) if results['failed'] > 0 else "",
+                    )
+                except Exception:
+                    pass  # audit failure should not block upload feedback
+                
                 status_var.set(f"✅ Upload complete! Success: {results['success']}, Failed: {results['failed']}")
                 status_label.config(foreground="green")
                 
@@ -8011,7 +7460,7 @@ def main():
 
     # Set logo as app icon for ALL windows (taskbar, title bar, alt-tab)
     _icon_photo = None  # keep ref to prevent GC
-    _icon_path = APP_DIR / "auth_radar_logo.png"
+    _icon_path = APP_DIR / "Auth Radar Logo.png"
     if _icon_path.exists():
         try:
             from PIL import Image, ImageTk
