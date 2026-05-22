@@ -53,6 +53,21 @@ def main():
     else:
         print("      NOTE: credentials.json not found. Users will need to add it for Gmail.")
     
+    # Step 2b: Close any running AuthExtractor.exe so PyInstaller can overwrite dist/
+    print("\n      Checking for running AuthExtractor.exe...")
+    try:
+        result = subprocess.run(
+            ["taskkill", "/F", "/IM", "AuthExtractor.exe"],
+            capture_output=True, text=True
+        )
+        if result.returncode == 0:
+            print("      Closed running AuthExtractor.exe.")
+            import time; time.sleep(1)  # brief pause so OS releases file handles
+        else:
+            print("      AuthExtractor.exe not running (OK).")
+    except Exception:
+        pass  # taskkill not available or failed — proceed anyway
+
     # Step 3: Build the executable
     print("\n[3/4] Building executable (this may take a few minutes)...")
     
@@ -63,7 +78,6 @@ def main():
         "--onedir",  # Create a folder with exe + dependencies (more reliable than onefile)
         "--windowed",  # No console window
         "--noconfirm",  # Overwrite without asking
-        "--clean",  # Clean cache
     ]
     
     # Add icon if it exists
@@ -72,9 +86,28 @@ def main():
         cmd.append(f"--icon={icon_path}")
 
     # Add logo image
-    logo_path = os.path.join(script_dir, "auth_radar_logo.png")
+    logo_path = os.path.join(script_dir, "Auth Radar Logo.png")
     if os.path.exists(logo_path):
         cmd.append(f"--add-data={logo_path};.")
+
+    # Add .env file
+    env_file = os.path.join(script_dir, ".env")
+    if os.path.exists(env_file):
+        cmd.append(f"--add-data={env_file};.")
+        print("      .env found (will be included).")
+
+    # Add new module packages
+    for pkg_dir in ["integrations", "extraction", "audit", "services", "review", "db"]:
+        pkg_path = os.path.join(script_dir, pkg_dir)
+        if os.path.exists(pkg_path):
+            cmd.append(f"--add-data={pkg_path};{pkg_dir}")
+            print(f"      {pkg_dir}/ package found (will be included).")
+
+    # Add config.py
+    config_path = os.path.join(script_dir, "config.py")
+    if os.path.exists(config_path):
+        cmd.append(f"--add-data={config_path};.")
+        print("      config.py found (will be included).")
 
     # Add poppler binaries
     if poppler_path:
@@ -104,11 +137,37 @@ def main():
         "google.auth.transport.requests",
         "googleapiclient.discovery",
         "googleapiclient.errors",
+        "dotenv",
+        "dropbox",
+        "dropbox.files",
+        "dropbox.oauth",
+        "integrations",
+        "integrations.dropbox_service",
+        "extraction",
+        "extraction.schema",
+        "extraction.router",
+        "extraction.pdf_text_extractor",
+        "extraction.ocr_extractor",
+        "extraction.structured_extractor",
+        "extraction.excel_extractor",
+        "audit",
+        "audit.logger",
+        "services",
+        "services.pdf_unlock_service",
+        "services.excel_export_service",
+        "services.page_detection_service",
+        "fitz",
+        "fitz._fitz",
+        "config",
     ]
     
     for imp in hidden_imports:
         cmd.append(f"--hidden-import={imp}")
-    
+
+    # PyMuPDF (fitz) ships native DLLs that --hidden-import alone won't collect.
+    # --collect-all ensures the compiled extension and all data files are bundled.
+    cmd.append("--collect-all=fitz")
+
     # Add the main script
     cmd.append(main_script)
     
@@ -151,10 +210,26 @@ def main():
             shutil.copy2(patient_names, dist_dir)
 
         # Copy logo if it exists
-        logo_src = os.path.join(script_dir, "auth_radar_logo.png")
+        logo_src = os.path.join(script_dir, "Auth Radar Logo.png")
         if os.path.exists(logo_src):
-            print("      Copying auth_radar_logo.png...")
+            print("      Copying Auth Radar Logo.png...")
             shutil.copy2(logo_src, dist_dir)
+
+        # Copy .env
+        env_src = os.path.join(script_dir, ".env")
+        if os.path.exists(env_src):
+            print("      Copying .env...")
+            shutil.copy2(env_src, dist_dir)
+
+        # Copy config.py
+        config_src = os.path.join(script_dir, "config.py")
+        if os.path.exists(config_src):
+            print("      Copying config.py...")
+            shutil.copy2(config_src, dist_dir)
+
+        # Ensure data/ directory exists in dist
+        dist_data = os.path.join(dist_dir, "data")
+        os.makedirs(dist_data, exist_ok=True)
 
         print("\n" + "=" * 60)
         print("BUILD SUCCESSFUL!")

@@ -1,0 +1,44 @@
+# Virtual environment
+venv/
+.venv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+
+# Environment and credentials
+.env
+.env.*
+credentials.json
+data/token_*.json
+data/gmail_accounts.json
+
+# Build artifacts
+build/
+dist/
+*.spec
+*.egg-info/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# Poppler binaries (large, users install separately)
+poppler/
+
+# Test batch files
+Test Batch/
+
+# Auth form subfolders (processed data)
+918D2340/
+C60D2340/
+2026-02 PA - S Bucks/
