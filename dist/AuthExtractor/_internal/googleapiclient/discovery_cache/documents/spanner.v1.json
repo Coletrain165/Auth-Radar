@@ -3436,7 +3436,7 @@
 }
 }
 },
-"revision": "20260203",
+"revision": "20260122",
 "rootUrl": "https://spanner.googleapis.com/",
 "schemas": {
 "Ack": {

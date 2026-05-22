@@ -576,7 +576,7 @@
 }
 }
 },
-"revision": "20260128",
+"revision": "20241231",
 "rootUrl": "https://cloudcontrolspartner.googleapis.com/",
 "schemas": {
 "AccessApprovalRequest": {
@@ -1308,8 +1308,7 @@ true
 "PARTNER_SOVEREIGN_CONTROLS_BY_SIA_MINSAIT",
 "PARTNER_SOVEREIGN_CONTROLS_BY_PSN",
 "PARTNER_SOVEREIGN_CONTROLS_BY_CNTXT",
-"PARTNER_SOVEREIGN_CONTROLS_BY_CNTXT_NO_EKM",
-"PARTNER_SPAIN_DATA_BOUNDARY_BY_TELEFONICA"
+"PARTNER_SOVEREIGN_CONTROLS_BY_CNTXT_NO_EKM"
 ],
 "enumDescriptions": [
 "Unknown Partner.",
@@ -1318,8 +1317,7 @@ true
 "Enum representing SIA_MINSAIT (Indra) partner.",
 "Enum representing PSN (TIM) partner.",
 "Enum representing CNTXT (Kingdom of Saudi Arabia) partner.",
-"Enum representing CNXT (Kingdom of Saudi Arabia) partner offering without EKM provisioning.",
-"Enum representing Telefonica (Spain) partner."
+"Enum representing CNXT (Kingdom of Saudi Arabia) partner offering without EKM provisioning."
 ],
 "type": "string"
 },

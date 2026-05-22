@@ -71,11 +71,6 @@
 },
 {
 "description": "Regional Endpoint",
-"endpointUrl": "https://firestore.asia-southeast3.rep.googleapis.com/",
-"location": "asia-southeast3"
-},
-{
-"description": "Regional Endpoint",
 "endpointUrl": "https://firestore.australia-southeast1.rep.googleapis.com/",
 "location": "australia-southeast1"
 },
@@ -118,11 +113,6 @@
 "description": "Regional Endpoint",
 "endpointUrl": "https://firestore.europe-west12.rep.googleapis.com/",
 "location": "europe-west12"
-},
-{
-"description": "Regional Endpoint",
-"endpointUrl": "https://firestore.europe-west15.rep.googleapis.com/",
-"location": "europe-west15"
 },
 {
 "description": "Regional Endpoint",
@@ -291,11 +281,6 @@
 },
 {
 "description": "Regional Endpoint",
-"endpointUrl": "https://batch-firestore.asia-southeast3.rep.googleapis.com/",
-"location": "asia-southeast3"
-},
-{
-"description": "Regional Endpoint",
 "endpointUrl": "https://batch-firestore.australia-southeast1.rep.googleapis.com/",
 "location": "australia-southeast1"
 },
@@ -338,11 +323,6 @@
 "description": "Regional Endpoint",
 "endpointUrl": "https://batch-firestore.europe-west12.rep.googleapis.com/",
 "location": "europe-west12"
-},
-{
-"description": "Regional Endpoint",
-"endpointUrl": "https://batch-firestore.europe-west15.rep.googleapis.com/",
-"location": "europe-west15"
 },
 {
 "description": "Regional Endpoint",
@@ -877,7 +857,7 @@
 }
 }
 },
-"revision": "20260130",
+"revision": "20260105",
 "rootUrl": "https://firestore.googleapis.com/",
 "schemas": {
 "Empty": {

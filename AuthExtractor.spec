@@ -1,8 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('C:\\00 Pace Auths- FOR COLE\\Auth Radar Logo.png', '.'), ('C:\\00 Pace Auths- FOR COLE\\.env', '.'), ('C:\\00 Pace Auths- FOR COLE\\integrations', 'integrations'), ('C:\\00 Pace Auths- FOR COLE\\extraction', 'extraction'), ('C:\\00 Pace Auths- FOR COLE\\audit', 'audit'), ('C:\\00 Pace Auths- FOR COLE\\services', 'services'), ('C:\\00 Pace Auths- FOR COLE\\review', 'review'), ('C:\\00 Pace Auths- FOR COLE\\db', 'db'), ('C:\\00 Pace Auths- FOR COLE\\config.py', '.'), ('C:\\00 Pace Auths- FOR COLE\\poppler\\poppler-24.08.0\\Library\\bin', 'poppler'), ('C:\\00 Pace Auths- FOR COLE\\credentials.json', '.')]
-datas = [('Auth Radar Logo.png', '.'), ('.env', '.'), ('integrations', 'integrations'), ('extraction', 'extraction'), ('audit', 'audit'), ('services', 'services'), ('review', 'review'), ('db', 'db'), ('config.py', '.'), ('poppler\\poppler-24.08.0\\Library\\bin', 'poppler'), ('credentials.json', '.')]
+datas = [('C:\\Auth Radar\\Auth Radar Logo.png', '.'), ('C:\\Auth Radar\\.env', '.'), ('C:\\Auth Radar\\integrations', 'integrations'), ('C:\\Auth Radar\\extraction', 'extraction'), ('C:\\Auth Radar\\audit', 'audit'), ('C:\\Auth Radar\\services', 'services'), ('C:\\Auth Radar\\review', 'review'), ('C:\\Auth Radar\\db', 'db'), ('C:\\Auth Radar\\config.py', '.'), ('C:\\Auth Radar\\poppler\\poppler-24.08.0\\Library\\bin', 'poppler'), ('C:\\Auth Radar\\credentials.json', '.')]
 binaries = []
 hiddenimports = ['pdfplumber', 'pdfplumber.page', 'pdfminer', 'pdfminer.pdfparser', 'pdfminer.pdfdocument', 'pdfminer.pdfpage', 'PIL', 'PIL.Image', 'pdf2image', 'pdf2image.pdf2image', 'pytesseract', 'pandas', 'openpyxl', 'google.oauth2.credentials', 'google_auth_oauthlib.flow', 'google.auth.transport.requests', 'googleapiclient.discovery', 'googleapiclient.errors', 'dotenv', 'dropbox', 'dropbox.files', 'dropbox.oauth', 'integrations', 'integrations.dropbox_service', 'extraction', 'extraction.schema', 'extraction.router', 'extraction.pdf_text_extractor', 'extraction.ocr_extractor', 'extraction.structured_extractor', 'extraction.excel_extractor', 'audit', 'audit.logger', 'services', 'services.pdf_unlock_service', 'services.excel_export_service', 'services.page_detection_service', 'fitz', 'fitz._fitz', 'config']
 tmp_ret = collect_all('fitz')
@@ -10,7 +9,7 @@ datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 
 a = Analysis(
-    ['auth_extractor.py'],
+    ['C:\\Auth Radar\\auth_extractor.py'],
     pathex=[],
     binaries=binaries,
     datas=datas,

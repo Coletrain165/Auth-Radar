@@ -70,11 +70,6 @@
 },
 {
 "description": "Regional Endpoint",
-"endpointUrl": "https://datastore.asia-southeast3.rep.googleapis.com/",
-"location": "asia-southeast3"
-},
-{
-"description": "Regional Endpoint",
 "endpointUrl": "https://datastore.australia-southeast1.rep.googleapis.com/",
 "location": "australia-southeast1"
 },
@@ -117,11 +112,6 @@
 "description": "Regional Endpoint",
 "endpointUrl": "https://datastore.europe-west12.rep.googleapis.com/",
 "location": "europe-west12"
-},
-{
-"description": "Regional Endpoint",
-"endpointUrl": "https://datastore.europe-west15.rep.googleapis.com/",
-"location": "europe-west15"
 },
 {
 "description": "Regional Endpoint",
@@ -290,11 +280,6 @@
 },
 {
 "description": "Regional Endpoint",
-"endpointUrl": "https://batch-datastore.asia-southeast3.rep.googleapis.com/",
-"location": "asia-southeast3"
-},
-{
-"description": "Regional Endpoint",
 "endpointUrl": "https://batch-datastore.australia-southeast1.rep.googleapis.com/",
 "location": "australia-southeast1"
 },
@@ -337,11 +322,6 @@
 "description": "Regional Endpoint",
 "endpointUrl": "https://batch-datastore.europe-west12.rep.googleapis.com/",
 "location": "europe-west12"
-},
-{
-"description": "Regional Endpoint",
-"endpointUrl": "https://batch-datastore.europe-west15.rep.googleapis.com/",
-"location": "europe-west15"
 },
 {
 "description": "Regional Endpoint",
@@ -1121,7 +1101,7 @@
 }
 }
 },
-"revision": "20260130",
+"revision": "20260105",
 "rootUrl": "https://datastore.googleapis.com/",
 "schemas": {
 "Aggregation": {
