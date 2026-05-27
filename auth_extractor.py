@@ -2711,6 +2711,7 @@ class AuthExtractorApp:
         self.dropbox_status_var = tk.StringVar(value="(not connected)")
         self.dropbox_name_count_var = tk.StringVar(value="(none)")
         self.finder_source_type = tk.StringVar(value="local")  # "local" or "dropbox"
+        self.finder_force_most_recent = tk.BooleanVar(value=False)
         
         self.setup_ui()
         self.check_ocr_status()
@@ -3991,11 +3992,14 @@ class AuthExtractorApp:
         add_row_btn = ttk.Button(entry_frame, text="➕ Add Row", command=self.add_finder_row_manual)
         add_row_btn.pack(side=tk.LEFT, padx=(0, 5))
 
-        bulk_btn = ttk.Button(entry_frame, text="📋 Bulk Import", command=self.bulk_import_finder)
-        bulk_btn.pack(side=tk.LEFT, padx=5)
-
         remove_btn = ttk.Button(entry_frame, text="➖ Remove", command=self.remove_finder_row)
-        remove_btn.pack(side=tk.LEFT, padx=(5, 0))
+        remove_btn.pack(side=tk.LEFT, padx=(0, 5))
+
+        bulk_btn = ttk.Button(entry_frame, text="📋 Bulk Import", command=self.bulk_import_finder)
+        bulk_btn.pack(side=tk.LEFT, padx=(0, 15))
+
+        ttk.Checkbutton(entry_frame, text="🕐 Force Most Recent",
+                        variable=self.finder_force_most_recent).pack(side=tk.LEFT, padx=(0, 5))
 
         # Table (Treeview) for criteria
         table_frame = ttk.Frame(self.search_criteria_frame)
@@ -4039,7 +4043,7 @@ class AuthExtractorApp:
         
         self.finder_found_columns = ["File Name", "Search Type"]
         self.finder_found_tree = ttk.Treeview(found_container, columns=self.finder_found_columns,
-                                               show="headings", height=12)
+                                               show="headings", height=15)
         
         self.finder_found_tree.heading("File Name", text="File Name")
         self.finder_found_tree.heading("Search Type", text="Search Type")
@@ -4063,14 +4067,14 @@ class AuthExtractorApp:
         
         # Bottom: Names Not Found
         not_found_frame = ttk.LabelFrame(self.results_view_frame, text="Names Not Found", padding="8")
-        not_found_frame.pack(fill=tk.BOTH, expand=True, pady=(3, 0))
+        not_found_frame.pack(fill=tk.BOTH, expand=False, pady=(3, 0))
         
         not_found_container = ttk.Frame(not_found_frame)
         not_found_container.pack(fill=tk.BOTH, expand=True)
         
         self.finder_not_found_columns = ["Patient Name", "Auth Type", "Reason"]
         self.finder_not_found_tree = ttk.Treeview(not_found_container, columns=self.finder_not_found_columns, 
-                                                   show="headings", height=12)
+                                                   show="headings", height=5)
         
         self.finder_not_found_tree.heading("Patient Name", text="Patient Name")
         self.finder_not_found_tree.heading("Auth Type", text="Auth Type")
@@ -4149,7 +4153,7 @@ class AuthExtractorApp:
         for item in self.finder_table.get_children():
             values = self.finder_table.item(item, 'values')
             criteria.append((values[0], values[1], values[2] if len(values) > 2 else "Most Recent",
-                             values[3] if len(values) > 3 else "", values[4] if len(values) > 4 else ""))
+                             values[3] if len(values) > 3 else ""))
 
         # Parse the shared Date Range Filter (MM/DD/YYYY)
         date_from_str = self.finder_date_from.get().strip()
@@ -4290,7 +4294,7 @@ class AuthExtractorApp:
                 all_for_name = all_imports_by_key.get(key, [(name, auth_type, search_type, dates)])
 
                 # --- Date Range search (Escort) ---
-                if search_type == "Date Range":
+                if search_type == "Date Range" and not self.finder_force_most_recent.get():
                     escort_from, escort_to = self._parse_dates_field(dates)
                     range_matches = []
                     for meta, mod in matching_files:
@@ -5875,7 +5879,7 @@ PACE Authorization Team""")
                                 name_only_matches.append((pdf, "Unskilled"))
             
             # --- Date Range search (Escort) ---
-            if search_type == "Date Range":
+            if search_type == "Date Range" and not self.finder_force_most_recent.get():
                 escort_from, escort_to = self._parse_dates_field(dates)
                 range_matches = []
                 for pdf, mtime in matching_files:
