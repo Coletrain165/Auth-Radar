@@ -42,3 +42,8 @@ Test Batch/
 918D2340/
 C60D2340/
 2026-02 PA - S Bucks/
+
+# Patient auth PDFs (PHI - never commit)
+PDF Auths/
+*.pdf
+*.PDF
