@@ -2416,12 +2416,12 @@ class SplashScreen:
         self.on_complete = on_complete
 
         # Colors — matches Auth Radar theme
-        self.bg     = '#1B2B3E'
-        self.panel  = '#243A52'
+        self.bg     = '#0F172A'
+        self.panel  = '#1E293B'
         self.accent = '#22C55E'
         self.text   = '#E5E7EB'
-        self.muted  = '#8BAFC6'
-        self.border = '#3A5570'
+        self.muted  = '#94A3B8'
+        self.border = '#334155'
 
         # Window chrome — frameless, centered
         w, h = 480, 340
@@ -2515,8 +2515,8 @@ class LandingPage:
     
     # Define available payer types
     PAYER_TYPES = {
-        "Coronado Pace": {
-            "name": "Coronado Pace",
+        "Pace": {
+            "name": "Pace",
             "description": "PACE Treatment Authorization Forms",
             "icon": "📋"
         },
@@ -2531,8 +2531,8 @@ class LandingPage:
     def __init__(self, root):
         self.root = root
         self.root.title("Auth Radar")
-        self.root.geometry("650x600")
-        self.root.minsize(550, 500)
+        self.root.geometry("600x500")
+        self.root.minsize(500, 400)
         self.selected_payer = None
         
         self.setup_ui()
@@ -2540,12 +2540,12 @@ class LandingPage:
     def setup_ui(self):
         """Set up the landing page UI."""
         # Auth Radar dark navy theme
-        bg_color = '#1B2B3E'
-        panel_color = '#243A52'
+        bg_color = '#0F172A'
+        panel_color = '#1E293B'
         text_color = '#E5E7EB'
         accent_color = '#22C55E'
-        text_muted = '#8BAFC6'
-        border_color = '#3A5570'
+        text_muted = '#94A3B8'
+        border_color = '#334155'
         
         self.root.configure(bg=bg_color)
         
@@ -2562,9 +2562,9 @@ class LandingPage:
                 raw = Image.open(str(logo_path)).convert("RGBA")
                 bg_img = Image.new("RGBA", raw.size, bg_color)
                 bg_img.alpha_composite(raw)
-                img = bg_img.resize((300, 300), Image.LANCZOS).convert("RGB")
+                img = bg_img.resize((180, 180), Image.LANCZOS).convert("RGB")
                 self._landing_logo = ImageTk.PhotoImage(img)
-                tk.Label(main_frame, image=self._landing_logo, bg=bg_color, bd=0, highlightthickness=0).pack(pady=(10, 16))
+                tk.Label(main_frame, image=self._landing_logo, bg=bg_color, bd=0, highlightthickness=0).pack(pady=(20, 20))
             except Exception:
                 pass
         
@@ -2595,7 +2595,7 @@ class LandingPage:
     def create_payer_button(self, parent, payer_key, payer_info, bg_color, panel_color, text_color, accent_color):
         """Create a styled button for a payer type."""
         # Button frame with visible border effect
-        btn_container = tk.Frame(parent, bg='#3A5570', padx=1, pady=1)
+        btn_container = tk.Frame(parent, bg='#334155', padx=1, pady=1)
         btn_container.pack(fill=tk.X, pady=8)
         
         # Inner button area
@@ -2627,7 +2627,7 @@ class LandingPage:
         arrow_label.pack(side=tk.RIGHT)
         
         # Hover colors - subtle lift effect
-        hover_bg = '#2E4A64'
+        hover_bg = '#334155'
         
         # Hover effects
         def on_enter(e):
@@ -2645,8 +2645,8 @@ class LandingPage:
             name_frame.configure(bg=panel_color)
             for widget in [icon_label, name_label, arrow_label]:
                 widget.configure(bg=panel_color)
-            arrow_label.configure(fg='#8BAFC6')
-            btn_container.configure(bg='#3A5570')
+            arrow_label.configure(fg='#94A3B8')
+            btn_container.configure(bg='#334155')
         
         def on_click(e):
             self.select_payer(payer_key)
@@ -2673,7 +2673,7 @@ class LandingPage:
 class AuthExtractorApp:
     """GUI Application for PDF extraction."""
     
-    def __init__(self, root, payer_type="Coronado Pace"):
+    def __init__(self, root, payer_type="Pace"):
         self.root = root
         self.payer_type = payer_type
         self.root.title(f"Auth Radar — {payer_type}")
@@ -2691,8 +2691,8 @@ class AuthExtractorApp:
         self.finder_dest = tk.StringVar()
         
         # File Finder results storage (for Excel export)
-        self.finder_found_matches = []  # (name, auth_type, filename, dates)
-        self.finder_not_found = []  # (name, auth_type, reason, dates)
+        self.finder_found_matches = []  # (name, auth_type, filename, last_dos)
+        self.finder_not_found = []  # (name, auth_type, reason, last_dos)
         self.finder_duplicate_imports = []  # Duplicate names from import
         self.finder_original_count = 0  # Original count before dedup
 
@@ -2711,7 +2711,6 @@ class AuthExtractorApp:
         self.dropbox_status_var = tk.StringVar(value="(not connected)")
         self.dropbox_name_count_var = tk.StringVar(value="(none)")
         self.finder_source_type = tk.StringVar(value="local")  # "local" or "dropbox"
-        self.finder_force_most_recent = tk.BooleanVar(value=False)
         
         self.setup_ui()
         self.check_ocr_status()
@@ -2745,21 +2744,21 @@ class AuthExtractorApp:
         """Set up the user interface."""
         # Auth Radar dark navy theme
         self.colors = {
-            'bg': '#1B2B3E',            # Teal-navy background
-            'panel': '#243A52',          # Slate panel/card
+            'bg': '#0F172A',            # Dark navy background
+            'panel': '#1E293B',          # Slate panel/card
             'text': '#E5E7EB',           # Light gray text
-            'text_light': '#8BAFC6',     # Muted teal text
+            'text_light': '#94A3B8',     # Muted slate text
             'accent': '#22C55E',         # Radar green - primary
             'accent_light': '#4ADE80',   # Lighter green hover
             'accent_dark': '#16A34A',    # Darker green pressed
             'accent_blue': '#06B6D4',    # Teal/cyan - secondary
             'accent_blue_light': '#22D3EE',
             'accent_blue_dark': '#0891B2',
-            'border': '#3A5570',         # Teal-slate border
+            'border': '#334155',         # Slate border
             'success': '#22C55E',        # Radar green - valid
             'warning': '#F59E0B',        # Amber - warnings
             'error': '#EF4444',          # Alert red - invalid
-            'row_alt': '#1A2E42',        # Alternating row
+            'row_alt': '#162033',        # Alternating row
             'selected': '#1D4ED8',       # Blue selection
             'entry_bg': '#1E293B',       # Entry field background
         }
@@ -3862,44 +3861,23 @@ class AuthExtractorApp:
             text="Search for PDFs by patient name, then copy matches to a destination folder",
             style='Desc.TLabel')
         desc_label.pack(anchor=tk.W, pady=(0, 15))
-
-        # Two-column layout: controls + criteria on left, results on right (full height)
-        outer_split = ttk.Frame(main_frame)
-        outer_split.pack(fill=tk.BOTH, expand=True)
-        left_col = ttk.Frame(outer_split)
-        left_col.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 8))
-        right_col = ttk.Frame(outer_split)
-        right_col.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
+        
         # Top row: Folders on left, Date filter on right
-        top_row = ttk.Frame(left_col)
+        top_row = ttk.Frame(main_frame)
         top_row.pack(fill=tk.X, pady=5)
         
-        # Left side: Source and Destination folders
+        # Left side: Source and Destination folders (takes most of the width)
         folders_frame = ttk.Frame(top_row)
-        folders_frame.pack(side=tk.LEFT)
+        folders_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         
-        # Source type selection — clickable box buttons
+        # Source type selection — Local Folder or Dropbox
         src_type_row = ttk.Frame(folders_frame)
         src_type_row.pack(fill=tk.X, pady=(0, 6), padx=(0, 15))
         ttk.Label(src_type_row, text="Source:", font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT, padx=(0, 10))
-
-        def _make_src_box(parent, label, value):
-            selected = (value == self.finder_source_type.get())
-            border = self.colors['accent'] if selected else self.colors['border']
-            outer = tk.Frame(parent, bg=border, padx=2, pady=2, cursor="hand2")
-            outer.pack(side=tk.LEFT, padx=(0, 8))
-            inner = tk.Frame(outer, bg=self.colors['panel'], padx=14, pady=7, cursor="hand2")
-            inner.pack()
-            lbl = tk.Label(inner, text=label, bg=self.colors['panel'], fg=self.colors['text'],
-                           font=("Segoe UI", 9, "bold"), cursor="hand2")
-            lbl.pack()
-            for w in [outer, inner, lbl]:
-                w.bind('<Button-1>', lambda e, v=value: self._select_finder_source(v))
-            return outer
-
-        self._src_local_outer = _make_src_box(src_type_row, "Local Folder", "local")
-        self._src_dropbox_outer = _make_src_box(src_type_row, "Dropbox", "dropbox")
+        ttk.Radiobutton(src_type_row, text="📁 Local Folder", variable=self.finder_source_type,
+                        value="local", command=self._toggle_finder_source).pack(side=tk.LEFT, padx=(0, 20))
+        ttk.Radiobutton(src_type_row, text="☁️ Dropbox Folder", variable=self.finder_source_type,
+                        value="dropbox", command=self._toggle_finder_source).pack(side=tk.LEFT)
 
         # Container that switches between local source frame and Dropbox source frame
         self._finder_source_container = ttk.Frame(folders_frame)
@@ -3916,22 +3894,26 @@ class AuthExtractorApp:
         source_btn.pack(side=tk.RIGHT)
 
         # Dropbox source (hidden until Dropbox radio selected)
-        self.finder_dropbox_source_frame = ttk.LabelFrame(self._finder_source_container, text="Dropbox Source", padding="8")
+        self.finder_dropbox_source_frame = ttk.LabelFrame(self._finder_source_container, text="☁️ Dropbox Source", padding="8")
         # Not packed yet — shown by _toggle_finder_source
 
-        # Row 1: Status + folder dropdown (auto-connects when Dropbox is selected)
+        # Row 1: Connect + status + folder dropdown
         _dbx_r1 = ttk.Frame(self.finder_dropbox_source_frame)
         _dbx_r1.pack(fill=tk.X, pady=(0, 4))
+        self.dropbox_connect_btn = ttk.Button(_dbx_r1, text="🔗 Connect", command=self._connect_dropbox)
+        self.dropbox_connect_btn.pack(side=tk.LEFT, padx=(0, 8))
         ttk.Label(_dbx_r1, textvariable=self.dropbox_status_var,
                   font=("Segoe UI", 9, "italic"), foreground="gray").pack(side=tk.LEFT, padx=(0, 12))
         ttk.Label(_dbx_r1, text="Folder:").pack(side=tk.LEFT, padx=(4, 2))
         self.dropbox_folder_combo = ttk.Combobox(_dbx_r1, textvariable=self.dropbox_folder_var,
                                                   width=30, state="normal")
-        self.dropbox_folder_combo.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.dropbox_folder_combo.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 4))
+        ttk.Button(_dbx_r1, text="🔄", width=3,
+                   command=self._refresh_dropbox_folders).pack(side=tk.LEFT)
         
         # Destination folder selection
         dest_frame = ttk.LabelFrame(folders_frame, text="Destination Folder", padding="8")
-        dest_frame.pack(padx=(0, 15))
+        dest_frame.pack(fill=tk.X, padx=(0, 15))
         
         dest_entry = ttk.Entry(dest_frame, textvariable=self.finder_dest, width=55)
         dest_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
@@ -3939,23 +3921,56 @@ class AuthExtractorApp:
         dest_btn = ttk.Button(dest_frame, text="📁 Browse", command=self.browse_finder_dest)
         dest_btn.pack(side=tk.RIGHT)
         
-        # Right side: Date range filter (vars kept for compatibility, no UI shown)
+        # Right side: Date range filter (fixed width, larger)
+        date_frame = ttk.LabelFrame(top_row, text="Date Range Filter", padding="12")
+        date_frame.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # From date row
+        from_frame = ttk.Frame(date_frame)
+        from_frame.pack(fill=tk.X, pady=(0, 8))
+        
+        ttk.Label(from_frame, text="From:", width=6).pack(side=tk.LEFT)
         self.finder_date_from = tk.StringVar()
+        from_entry = ttk.Entry(from_frame, textvariable=self.finder_date_from, width=14)
+        from_entry.pack(side=tk.LEFT, padx=(0, 5))
+        
+        # To date row
+        to_frame = ttk.Frame(date_frame)
+        to_frame.pack(fill=tk.X, pady=(0, 8))
+        
+        ttk.Label(to_frame, text="To:", width=6).pack(side=tk.LEFT)
         self.finder_date_to = tk.StringVar()
+        to_entry = ttk.Entry(to_frame, textvariable=self.finder_date_to, width=14)
+        to_entry.pack(side=tk.LEFT, padx=(0, 5))
         
-        # Results summary bar (no toggle needed — both panels always visible)
+        # Date format hint
+        ttk.Label(date_frame, text="Format: MM/DD/YYYY", 
+                  font=("Segoe UI", 8), foreground="gray").pack(anchor=tk.W, pady=(5, 0))
+        
+        # Toggle buttons frame
+        toggle_frame = ttk.Frame(main_frame)
+        toggle_frame.pack(fill=tk.X, pady=(10, 5))
+        
         self.finder_view_var = tk.StringVar(value="criteria")
-        self.finder_results_summary_var = tk.StringVar(value="")
-        summary_bar = ttk.Frame(left_col)
-        summary_bar.pack(fill=tk.X, pady=(10, 5))
-        ttk.Label(summary_bar, textvariable=self.finder_results_summary_var,
-                  font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT)
         
-        # Container for criteria (fills remaining left-col space above buttons)
-        self.finder_content_container = ttk.Frame(left_col)
+        self.criteria_toggle_btn = ttk.Button(toggle_frame, text="📝 Search Criteria", 
+                                               command=lambda: self.toggle_finder_view("criteria"))
+        self.criteria_toggle_btn.pack(side=tk.LEFT, padx=(0, 5))
+        
+        self.results_toggle_btn = ttk.Button(toggle_frame, text="📊 View Results", 
+                                              command=lambda: self.toggle_finder_view("results"))
+        self.results_toggle_btn.pack(side=tk.LEFT, padx=5)
+        
+        # Results summary (shown next to toggle)
+        self.finder_results_summary_var = tk.StringVar(value="")
+        ttk.Label(toggle_frame, textvariable=self.finder_results_summary_var, 
+                  font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT, padx=(20, 0))
+        
+        # Container for toggleable content
+        self.finder_content_container = ttk.Frame(main_frame)
 
         # Status line - pack at bottom FIRST so it's always visible
-        status_frame = ttk.Frame(left_col)
+        status_frame = ttk.Frame(main_frame)
         status_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=(0, 5))
         self.finder_status_var = tk.StringVar(value="Ready to search")
         self.finder_status_label = ttk.Label(status_frame, textvariable=self.finder_status_var,
@@ -3963,7 +3978,7 @@ class AuthExtractorApp:
         self.finder_status_label.pack(side=tk.LEFT)
 
         # Buttons - pack at bottom above status so they're always visible
-        button_frame = ttk.Frame(left_col)
+        button_frame = ttk.Frame(main_frame)
         button_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=(5, 2))
 
         self.find_btn = ttk.Button(button_frame, text="\U0001f50d Find & Copy Files",
@@ -3985,43 +4000,47 @@ class AuthExtractorApp:
         # === SEARCH CRITERIA VIEW ===
         self.search_criteria_frame = ttk.LabelFrame(self.finder_content_container, text="Search Criteria", padding="10")
         
-        # Toolbar for table actions
+        # Entry row for adding new criteria
         entry_frame = ttk.Frame(self.search_criteria_frame)
         entry_frame.pack(fill=tk.X, pady=(0, 10))
-
-        add_row_btn = ttk.Button(entry_frame, text="➕ Add Row", command=self.add_finder_row_manual)
-        add_row_btn.pack(side=tk.LEFT, padx=(0, 5))
-
+        
+        ttk.Label(entry_frame, text="Patient Name:").pack(side=tk.LEFT, padx=(0, 5))
+        self.finder_name_entry = ttk.Entry(entry_frame, width=30)
+        self.finder_name_entry.pack(side=tk.LEFT, padx=(0, 15))
+        
+        ttk.Label(entry_frame, text="Auth Type:").pack(side=tk.LEFT, padx=(0, 5))
+        self.finder_type_combo = ttk.Combobox(entry_frame, width=10, 
+            values=["Unskilled", "Skilled"], state="readonly")
+        self.finder_type_combo.pack(side=tk.LEFT, padx=(0, 15))
+        self.finder_type_combo.set("Unskilled")
+        
+        add_btn = ttk.Button(entry_frame, text="➕ Add", command=self.add_finder_row)
+        add_btn.pack(side=tk.LEFT, padx=5)
+        
         remove_btn = ttk.Button(entry_frame, text="➖ Remove", command=self.remove_finder_row)
-        remove_btn.pack(side=tk.LEFT, padx=(0, 5))
-
+        remove_btn.pack(side=tk.LEFT, padx=5)
+        
         bulk_btn = ttk.Button(entry_frame, text="📋 Bulk Import", command=self.bulk_import_finder)
-        bulk_btn.pack(side=tk.LEFT, padx=(0, 15))
+        bulk_btn.pack(side=tk.LEFT, padx=5)
+        
 
-        ttk.Checkbutton(entry_frame, text="🕐 Force Most Recent",
-                        variable=self.finder_force_most_recent).pack(side=tk.LEFT, padx=(0, 5))
-
+        
         # Table (Treeview) for criteria
         table_frame = ttk.Frame(self.search_criteria_frame)
         table_frame.pack(fill=tk.BOTH, expand=True, pady=(10, 0))
         
-        columns = ("name", "auth_type", "search_type", "dates")
-        self.finder_table = ttk.Treeview(table_frame, columns=columns, show="tree headings", height=12,
-                                          selectmode="none")
+        columns = ("name", "auth_type", "searches_for", "last_dos")
+        self.finder_table = ttk.Treeview(table_frame, columns=columns, show="headings", height=10)
         
-        self.finder_table.column("#0", width=35, minwidth=35, stretch=False, anchor=tk.CENTER)
-        self.finder_table.heading("#0", text="")
         self.finder_table.heading("name", text="Patient Name")
         self.finder_table.heading("auth_type", text="Auth Type")
-        self.finder_table.heading("search_type", text="Search Type")
-        self.finder_table.heading("dates", text="Dates")
+        self.finder_table.heading("searches_for", text="Searches For")
+        self.finder_table.heading("last_dos", text="Last DOS")
         
-        self.finder_table.column("name", width=200, anchor=tk.W)
-        self.finder_table.column("auth_type", width=80, anchor=tk.CENTER, stretch=False)
-        self.finder_table.column("search_type", width=90, anchor=tk.CENTER, stretch=False)
-        self.finder_table.column("dates", width=200, anchor=tk.CENTER, stretch=False)
-        
-        self.finder_table.bind("<ButtonRelease-1>", self._finder_table_click)
+        self.finder_table.column("name", width=250, anchor=tk.W)
+        self.finder_table.column("auth_type", width=100, anchor=tk.CENTER)
+        self.finder_table.column("searches_for", width=180, anchor=tk.W)
+        self.finder_table.column("last_dos", width=120, anchor=tk.CENTER)
         
         table_scroll = ttk.Scrollbar(table_frame, orient=tk.VERTICAL, command=self.finder_table.yview)
         self.finder_table.configure(yscrollcommand=table_scroll.set)
@@ -4029,27 +4048,32 @@ class AuthExtractorApp:
         self.finder_table.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         table_scroll.pack(side=tk.RIGHT, fill=tk.Y)
         
-        # Bind double-click on table for inline editing
+        # Bind Enter key to add row
+        self.finder_name_entry.bind('<Return>', lambda e: self.add_finder_row())
         
-        # === RESULTS VIEW (right column, fills full height) ===
-        self.results_view_frame = ttk.Frame(right_col)
+        # === RESULTS VIEW (Split: Found left, Not Found right) ===
+        self.results_view_frame = ttk.Frame(self.finder_content_container)
         
         # Left side: Files Found
         found_frame = ttk.LabelFrame(self.results_view_frame, text="Files Found", padding="8")
-        found_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 3))
+        found_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 5))
         
         found_container = ttk.Frame(found_frame)
         found_container.pack(fill=tk.BOTH, expand=True)
         
-        self.finder_found_columns = ["File Name", "Search Type"]
-        self.finder_found_tree = ttk.Treeview(found_container, columns=self.finder_found_columns,
-                                               show="headings", height=15)
+        self.finder_found_columns = ["Patient Name", "Auth Type", "File Name", "Last DOS"]
+        self.finder_found_tree = ttk.Treeview(found_container, columns=self.finder_found_columns, 
+                                               show="headings", height=12)
         
+        self.finder_found_tree.heading("Patient Name", text="Patient Name")
+        self.finder_found_tree.heading("Auth Type", text="Auth Type")
         self.finder_found_tree.heading("File Name", text="File Name")
-        self.finder_found_tree.heading("Search Type", text="Search Type")
+        self.finder_found_tree.heading("Last DOS", text="Last DOS")
         
-        self.finder_found_tree.column("File Name", width=300, anchor=tk.W)
-        self.finder_found_tree.column("Search Type", width=120, anchor=tk.CENTER)
+        self.finder_found_tree.column("Patient Name", width=150, anchor=tk.W)
+        self.finder_found_tree.column("Auth Type", width=70, anchor=tk.CENTER)
+        self.finder_found_tree.column("File Name", width=250, anchor=tk.W)
+        self.finder_found_tree.column("Last DOS", width=80, anchor=tk.CENTER)
         
         self.finder_found_tree.tag_configure("duplicate", background="#422006", foreground="#FCD34D")
         self.finder_found_tree.tag_configure("normal", background="#1E293B")
@@ -4065,16 +4089,16 @@ class AuthExtractorApp:
         ttk.Label(found_frame, textvariable=self.finder_found_count_var, 
                   font=("Segoe UI", 9, "italic"), foreground="#4CAF50").pack(anchor=tk.W, pady=(5, 0))
         
-        # Bottom: Names Not Found
+        # Right side: Names Not Found
         not_found_frame = ttk.LabelFrame(self.results_view_frame, text="Names Not Found", padding="8")
-        not_found_frame.pack(fill=tk.BOTH, expand=False, pady=(3, 0))
+        not_found_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(5, 0))
         
         not_found_container = ttk.Frame(not_found_frame)
         not_found_container.pack(fill=tk.BOTH, expand=True)
         
         self.finder_not_found_columns = ["Patient Name", "Auth Type", "Reason"]
         self.finder_not_found_tree = ttk.Treeview(not_found_container, columns=self.finder_not_found_columns, 
-                                                   show="headings", height=5)
+                                                   show="headings", height=12)
         
         self.finder_not_found_tree.heading("Patient Name", text="Patient Name")
         self.finder_not_found_tree.heading("Auth Type", text="Auth Type")
@@ -4097,22 +4121,8 @@ class AuthExtractorApp:
         ttk.Label(not_found_frame, textvariable=self.finder_not_found_count_var, 
                   font=("Segoe UI", 9, "italic"), foreground="#ff6b6b").pack(anchor=tk.W, pady=(5, 0))
         
-        # Show both: criteria fills left col, results fill right col
+        # Show criteria view by default
         self.search_criteria_frame.pack(fill=tk.BOTH, expand=True)
-        self.results_view_frame.pack(fill=tk.BOTH, expand=True)
-
-    def _select_finder_source(self, value):
-        """Switch source type, update box highlights, and auto-connect Dropbox if chosen."""
-        self.finder_source_type.set(value)
-        if hasattr(self, '_src_local_outer'):
-            self._src_local_outer.configure(
-                bg=self.colors['accent'] if value == 'local' else self.colors['border'])
-        if hasattr(self, '_src_dropbox_outer'):
-            self._src_dropbox_outer.configure(
-                bg=self.colors['accent'] if value == 'dropbox' else self.colors['border'])
-        self._toggle_finder_source()
-        if value == 'dropbox' and (not self.dropbox_service or not self.dropbox_service.is_connected):
-            self._connect_dropbox()
 
     def _toggle_finder_source(self):
         """Toggle between local folder and Dropbox source in File Finder."""
@@ -4152,8 +4162,7 @@ class AuthExtractorApp:
         criteria = []
         for item in self.finder_table.get_children():
             values = self.finder_table.item(item, 'values')
-            criteria.append((values[0], values[1], values[2] if len(values) > 2 else "Most Recent",
-                             values[3] if len(values) > 3 else ""))
+            criteria.append((values[0], values[1], values[3] if len(values) > 3 else ""))
 
         # Parse the shared Date Range Filter (MM/DD/YYYY)
         date_from_str = self.finder_date_from.get().strip()
@@ -4243,19 +4252,19 @@ class AuthExtractorApp:
             # ── Name-matching mode (date range already applied to all_files above) ──
             all_imports_by_key = {}
             original_criteria_count = len(criteria)
-            for name, auth_type, search_type, dates in criteria:
+            for name, auth_type, last_dos in criteria:
                 key = (name.upper().strip(), auth_type.upper().strip())
-                all_imports_by_key.setdefault(key, []).append((name, auth_type, search_type, dates))
+                all_imports_by_key.setdefault(key, []).append((name, auth_type, last_dos))
 
             duplicate_import_entries = [e for entries in all_imports_by_key.values() for e in entries[1:]]
-            criteria_for_search = [(v[0][0], v[0][1], v[0][2], v[0][3]) for v in all_imports_by_key.values()]
+            criteria_for_search = [(v[0][0], v[0][1], v[0][2]) for v in all_imports_by_key.values()]
 
             self.finder_log_msg(f"   🔍 Matching {len(criteria_for_search)} patients against {len(all_files)} files...")
 
             name_found_type_mismatch = []
             not_found_at_all = []
 
-            for name, auth_type, search_type, dates in criteria_for_search:
+            for name, auth_type, last_dos in criteria_for_search:
                 name_lower = name.lower()
                 name_cleaned = re.sub(r'\s*\([^)]*\)\s*', ' ', name_lower)
                 name_parts = [p for p in name_cleaned.replace(",", " ").split() if len(p) > 2]
@@ -4291,41 +4300,8 @@ class AuthExtractorApp:
                                 name_only_matches.append((meta, found_type))
 
                 key = (name.upper().strip(), auth_type.upper().strip())
-                all_for_name = all_imports_by_key.get(key, [(name, auth_type, search_type, dates)])
+                all_for_name = all_imports_by_key.get(key, [(name, auth_type, last_dos)])
 
-                # --- Date Range search (Escort) ---
-                if search_type == "Date Range" and not self.finder_force_most_recent.get():
-                    escort_from, escort_to = self._parse_dates_field(dates)
-                    range_matches = []
-                    for meta, mod in matching_files:
-                        file_date = self._extract_date_from_filename(meta.name)
-                        if file_date is None:
-                            continue
-                        if escort_from and file_date < escort_from:
-                            continue
-                        if escort_to and file_date > escort_to:
-                            continue
-                        range_matches.append(meta)
-                    if range_matches:
-                        for meta in range_matches:
-                            dest_file = dest_path / meta.name
-                            if not dest_file.exists():
-                                try:
-                                    self.finder_log_msg(f"   ⬇️  {meta.name}")
-                                    self.dropbox_service.download_file(meta, str(dest_path))
-                                    self._auto_unlock_pdf(str(dest_file))
-                                    matched += 1
-                                except Exception as e:
-                                    self.finder_log_msg(f"   ❌ Download failed {meta.name}: {e}")
-                                    continue
-                            for n, t, st, d in all_for_name:
-                                found_matches.append((n, t, meta.name, d))
-                    else:
-                        for n, t, st, d in all_for_name:
-                            not_found_at_all.append((n, t, d))
-                    continue
-
-                # --- Most Recent search (Skilled / Unskilled) ---
                 if matching_files:
                     matching_files.sort(key=lambda x: x[1] if x[1] else datetime.min, reverse=True)
                     best = matching_files[0][0]
@@ -4339,17 +4315,17 @@ class AuthExtractorApp:
                             matched += 1
                         except Exception as e:
                             self.finder_log_msg(f"   ❌ Download failed {best.name}: {e}")
-                            for n, t, st, d in all_for_name:
+                            for n, t, d in all_for_name:
                                 not_found_at_all.append((n, t, d))
                             continue
-                    for n, t, st, d in all_for_name:
+                    for n, t, d in all_for_name:
                         found_matches.append((n, t, best.name, d))
                 elif name_only_matches:
                     found_type = name_only_matches[0][1]
-                    for n, t, st, d in all_for_name:
+                    for n, t, d in all_for_name:
                         name_found_type_mismatch.append((n, t, found_type, d))
                 else:
-                    for n, t, st, d in all_for_name:
+                    for n, t, d in all_for_name:
                         not_found_at_all.append((n, t, d))
 
             self.finder_duplicate_imports = duplicate_import_entries
@@ -4375,8 +4351,21 @@ class AuthExtractorApp:
             f"Not found: {len(not_found_list)}")
 
     def toggle_finder_view(self, view):
-        """Both panels are always visible — no toggling needed."""
+        """Toggle between search criteria view and results view."""
         self.finder_view_var.set(view)
+        
+        if view == "criteria":
+            self.results_view_frame.pack_forget()
+            self.search_criteria_frame.pack(fill=tk.BOTH, expand=True)
+            # Update button styles to show active state
+            self.criteria_toggle_btn.configure(style='Action.TButton')
+            self.results_toggle_btn.configure(style='TButton')
+        else:  # results
+            self.search_criteria_frame.pack_forget()
+            self.results_view_frame.pack(fill=tk.BOTH, expand=True)
+            # Update button styles
+            self.criteria_toggle_btn.configure(style='TButton')
+            self.results_toggle_btn.configure(style='Action.TButton')
     
     def proceed_to_extract_from_finder(self):
         """Navigate to Extract tab and set up for extraction from finder destination."""
@@ -4398,10 +4387,10 @@ class AuthExtractorApp:
         
         # Track which files are used by multiple names
         file_to_names = {}  # filename -> list of names
-        for name, auth_type, filename, dates in self.finder_found_matches:
+        for name, auth_type, filename, last_dos in self.finder_found_matches:
             if filename not in file_to_names:
                 file_to_names[filename] = []
-            file_to_names[filename].append((name, auth_type, dates))
+            file_to_names[filename].append((name, auth_type, last_dos))
         
         # Identify duplicate files (same file matched to multiple names)
         duplicate_files = {f for f, names in file_to_names.items() if len(names) > 1}
@@ -4411,21 +4400,21 @@ class AuthExtractorApp:
         duplicate_count = 0
         unique_files = set()
         
-        for name, auth_type, filename, dates in self.finder_found_matches:
+        for name, auth_type, filename, last_dos in self.finder_found_matches:
             is_duplicate = filename in duplicate_files
             tag = "duplicate" if is_duplicate else "normal"
             if is_duplicate:
                 duplicate_count += 1
             
-            self.finder_found_tree.insert("", tk.END,
-                                          values=(filename, ""),
+            self.finder_found_tree.insert("", tk.END, 
+                                          values=(name, auth_type, filename, last_dos),
                                           tags=(tag,))
             unique_files.add(filename)
             found_count += 1
         
         # Populate not found
         not_found_count = 0
-        for name, auth_type, reason, dates in self.finder_not_found:
+        for name, auth_type, reason, last_dos in self.finder_not_found:
             self.finder_not_found_tree.insert("", tk.END,
                                                values=(name, auth_type, reason),
                                                tags=("not_found",))
@@ -5080,7 +5069,7 @@ PACE Authorization Team""")
         
         # Add names not found from file finder
         if hasattr(self, 'finder_not_found'):
-            for name, auth_type, reason, dates in self.finder_not_found:
+            for name, auth_type, reason, last_dos in self.finder_not_found:
                 self.email_queue_tree.insert("", tk.END, 
                     values=(name, auth_type, "File Finder", reason),
                     tags=("not_found",))
@@ -5267,86 +5256,24 @@ PACE Authorization Team""")
         keywords = self.get_keywords_for_type(auth_type)
         searches_for = ", ".join(keywords).title() if keywords else "Unknown"
         
-        search_type = "Date Range" if auth_type.lower() == "escort" else "Most Recent"
+        # Manual entries don't have a last DOS - leave blank
+        last_dos = ""
+        
         # Add to table
-        self.finder_table.insert("", tk.END, text="☐", values=(name, auth_type, search_type, ""))
+        self.finder_table.insert("", tk.END, values=(name, auth_type, searches_for, last_dos))
         
         # Clear the name entry for next input
         self.finder_name_entry.delete(0, tk.END)
         self.finder_name_entry.focus()
     
-    def _finder_table_click(self, event):
-        """Toggle the checkbox on the clicked row."""
-        item = self.finder_table.identify_row(event.y)
-        if not item:
-            return
-        current = self.finder_table.item(item, 'text')
-        self.finder_table.item(item, text="\u2611" if current == "\u2610" else "\u2610")
-
-    def add_finder_row_manual(self):
-        """Open a dialog to manually add a single row to the search criteria table."""
-        popup = tk.Toplevel(self.root)
-        popup.title("Add Row")
-        popup.geometry("420x300")
-        popup.transient(self.root)
-        popup.grab_set()
-        self.style_popup(popup)
-
-        popup.update_idletasks()
-        x = self.root.winfo_x() + (self.root.winfo_width() // 2) - 210
-        y = self.root.winfo_y() + (self.root.winfo_height() // 2) - 150
-        popup.geometry(f"+{x}+{y}")
-
-        frame = ttk.Frame(popup, padding="15")
-        frame.pack(fill=tk.BOTH, expand=True)
-        frame.columnconfigure(1, weight=1)
-
-        ttk.Label(frame, text="Patient Name:").grid(row=0, column=0, sticky=tk.W, pady=6)
-        name_var = tk.StringVar()
-        name_entry = ttk.Entry(frame, textvariable=name_var, width=30)
-        name_entry.grid(row=0, column=1, sticky=tk.EW, padx=(10, 0), pady=6)
-        name_entry.focus()
-
-        ttk.Label(frame, text="Auth Type:").grid(row=1, column=0, sticky=tk.W, pady=6)
-        type_var = tk.StringVar(value="Unskilled")
-        type_combo = ttk.Combobox(frame, textvariable=type_var,
-                                  values=["Unskilled", "Skilled", "Escort"],
-                                  state="readonly", width=15)
-        type_combo.grid(row=1, column=1, sticky=tk.W, padx=(10, 0), pady=6)
-
-        ttk.Label(frame, text="Dates:").grid(row=2, column=0, sticky=tk.W, pady=6)
-        dates_var = tk.StringVar()
-        ttk.Entry(frame, textvariable=dates_var, width=30).grid(row=2, column=1, sticky=tk.W, padx=(10, 0), pady=6)
-        ttk.Label(frame, text="1 date or 2 comma-separated dates (MM/DD/YYYY — Escort only)",
-                  foreground="#888888").grid(row=3, column=0, columnspan=2, sticky=tk.W, padx=(10, 0))
-
-        def do_add():
-            name = name_var.get().strip()
-            if not name:
-                messagebox.showwarning("Warning", "Patient name is required", parent=popup)
-                return
-            auth_type = type_var.get().strip()
-            search_type = "Date Range" if auth_type.lower() == "escort" else "Most Recent"
-            dates_val = dates_var.get().strip()
-            self.finder_table.insert("", tk.END, text="\u2610", values=(name, auth_type, search_type, dates_val))
-            popup.destroy()
-
-        btn_frame = ttk.Frame(frame)
-        btn_frame.grid(row=4, column=0, columnspan=2, sticky=tk.E, pady=(10, 0))
-        ttk.Button(btn_frame, text="Add", command=do_add, style='Action.TButton').pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Button(btn_frame, text="Cancel", command=popup.destroy).pack(side=tk.LEFT)
-
-        popup.bind("<Return>", lambda e: do_add())
-        popup.bind("<Escape>", lambda e: popup.destroy())
-
     def remove_finder_row(self):
-        """Remove all checked row(s) from the finder table."""
-        checked = [item for item in self.finder_table.get_children()
-                   if self.finder_table.item(item, 'text') == "\u2611"]
-        if not checked:
-            messagebox.showwarning("Warning", "Please check at least one row to remove.\n\nClick the checkbox at the start of a row to select it.")
+        """Remove selected row(s) from the finder table."""
+        selected = self.finder_table.selection()
+        if not selected:
+            messagebox.showwarning("Warning", "Please select a row to remove")
             return
-        for item in checked:
+        
+        for item in selected:
             self.finder_table.delete(item)
     
     def bulk_import_finder(self):
@@ -5382,7 +5309,7 @@ PACE Authorization Team""")
         # Configure grid weights
         columns_frame.columnconfigure(0, weight=3)  # Name column wider
         columns_frame.columnconfigure(1, weight=1)
-        columns_frame.columnconfigure(2, weight=2)
+        columns_frame.columnconfigure(2, weight=1)
         columns_frame.rowconfigure(1, weight=1)
         
         # Column 1: Patient Names
@@ -5420,26 +5347,27 @@ PACE Authorization Team""")
             font=("Segoe UI", 8), foreground="gray")
         type_hint.pack(anchor=tk.W, pady=(5, 0))
         
-        # Column 3: Dates
-        dates_frame_outer = ttk.Frame(columns_frame)
-        dates_frame_outer.grid(row=0, column=2, rowspan=2, sticky="nsew", padx=5)
-
-        dates_col_label = ttk.Label(dates_frame_outer, text="Dates", font=("Segoe UI", 10, "bold"))
-        dates_col_label.pack(anchor=tk.W, pady=(0, 5))
-
-        dates_col_inner = ttk.Frame(dates_frame_outer)
-        dates_col_inner.pack(fill=tk.BOTH, expand=True)
-
-        dates_text = tk.Text(dates_col_inner, font=("Consolas", 10), width=22)
-        dates_col_scroll = ttk.Scrollbar(dates_col_inner, orient=tk.VERTICAL, command=dates_text.yview)
-        dates_text.config(yscrollcommand=dates_col_scroll.set)
-        dates_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        dates_col_scroll.pack(side=tk.RIGHT, fill=tk.Y)
-
-        dates_col_hint = ttk.Label(dates_frame_outer,
-            text="1 date or 2 comma-separated dates\n(MM/DD/YYYY — used for Escort matching)",
+        # Column 3: Last DOS
+        dos_frame_outer = ttk.Frame(columns_frame)
+        dos_frame_outer.grid(row=0, column=2, rowspan=2, sticky="nsew", padx=(5, 0))
+        
+        dos_label = ttk.Label(dos_frame_outer, text="Last DOS", font=("Segoe UI", 10, "bold"))
+        dos_label.pack(anchor=tk.W, pady=(0, 5))
+        
+        dos_inner = ttk.Frame(dos_frame_outer)
+        dos_inner.pack(fill=tk.BOTH, expand=True)
+        
+        dos_text = tk.Text(dos_inner, font=("Consolas", 10), width=12)
+        dos_scroll = ttk.Scrollbar(dos_inner, orient=tk.VERTICAL, command=dos_text.yview)
+        dos_text.config(yscrollcommand=dos_scroll.set)
+        dos_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        dos_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # DOS helper label
+        dos_hint = ttk.Label(dos_frame_outer, 
+            text="Format: MM/DD/YYYY\n(one per line)",
             font=("Segoe UI", 8), foreground="gray")
-        dates_col_hint.pack(anchor=tk.W, pady=(5, 0))
+        dos_hint.pack(anchor=tk.W, pady=(5, 0))
         
         # Quick fill options for Auth Type
         quick_frame = ttk.LabelFrame(main_frame, text="Quick Fill Auth Type", padding="10")
@@ -5459,12 +5387,10 @@ PACE Authorization Team""")
                    command=lambda: fill_type_column("Unskilled")).pack(side=tk.LEFT, padx=5)
         ttk.Button(quick_frame, text="Fill All Skilled", 
                    command=lambda: fill_type_column("Skilled")).pack(side=tk.LEFT, padx=5)
-        ttk.Button(quick_frame, text="Fill All Escort",
-                   command=lambda: fill_type_column("Escort")).pack(side=tk.LEFT, padx=5)
         
         ttk.Label(quick_frame, text="(Click after pasting names to auto-fill the type column)", 
                   font=("Segoe UI", 8), foreground="gray").pack(side=tk.LEFT, padx=(15, 0))
-
+        
         # Buttons
         btn_frame = ttk.Frame(main_frame)
         btn_frame.pack(fill=tk.X, pady=(10, 0))
@@ -5473,20 +5399,22 @@ PACE Authorization Team""")
             # Get data from each column
             names = name_text.get(1.0, tk.END).strip().split("\n")
             types = type_text.get(1.0, tk.END).strip().split("\n")
-            dates_rows = dates_text.get(1.0, tk.END).strip().split("\n")
-
+            dates = dos_text.get(1.0, tk.END).strip().split("\n")
+            
             # Clean up empty lines
             names = [n.strip() for n in names if n.strip()]
             types = [t.strip() for t in types]
-            dates_rows = [d.strip() for d in dates_rows]
+            dates = [d.strip() for d in dates]
             
             if not names:
                 messagebox.showwarning("Warning", "Please paste patient names first", parent=popup)
                 return
             
-            # Extend types array to match names length
+            # Extend types and dates arrays to match names length
             while len(types) < len(names):
                 types.append("")
+            while len(dates) < len(names):
+                dates.append("")
             
             added = 0
             errors = []
@@ -5497,6 +5425,7 @@ PACE Authorization Team""")
                 
                 # Get type for this row
                 auth_type = types[i].strip() if i < len(types) else ""
+                last_dos = dates[i].strip() if i < len(dates) else ""
                 
                 # Normalize auth type
                 auth_type_lower = auth_type.lower()
@@ -5514,9 +5443,10 @@ PACE Authorization Team""")
                     errors.append(f"Row {i+1}: '{name[:30]}' - unknown type '{auth_type}'")
                     continue
                 
-                search_type = "Date Range" if auth_type == "Escort" else "Most Recent"
-                dates_val = dates_rows[i].strip() if i < len(dates_rows) else ""
-                self.finder_table.insert("", tk.END, text="\u2610", values=(name, auth_type, search_type, dates_val))
+                # Add to table
+                keywords = self.get_keywords_for_type(auth_type)
+                searches_for = ", ".join(keywords).title() if keywords else "Unknown"
+                self.finder_table.insert("", tk.END, values=(name, auth_type, searches_for, last_dos))
                 added += 1
             
             # Show result
@@ -5542,7 +5472,7 @@ PACE Authorization Team""")
         clear_btn = ttk.Button(btn_frame, text="🗑️ Clear All", 
                                command=lambda: [name_text.delete(1.0, tk.END), 
                                                 type_text.delete(1.0, tk.END), 
-                                                dates_text.delete(1.0, tk.END)])
+                                                dos_text.delete(1.0, tk.END)])
         clear_btn.pack(side=tk.LEFT, padx=5)
         
         cancel_btn = ttk.Button(btn_frame, text="Cancel", command=popup.destroy)
@@ -5565,8 +5495,13 @@ PACE Authorization Team""")
     
     def clear_finder(self):
         """Clear the finder table and log."""
+        # Clear the table
         for item in self.finder_table.get_children():
             self.finder_table.delete(item)
+        # Clear entry fields
+        self.finder_name_entry.delete(0, tk.END)
+        self.finder_type_combo.set("Unskilled")
+        # Clear status
         if hasattr(self, 'finder_status_var'):
             self.finder_status_var.set("Ready to search")
     
@@ -5585,64 +5520,6 @@ PACE Authorization Team""")
         if hasattr(self, 'finder_status_var'):
             self.finder_status_var.set(message)
         self.root.update_idletasks()
-
-    def _parse_dates_field(self, dates_str):
-        """Parse a Dates field: one date or two comma-separated dates.
-        Returns (from_date, to_date). For a single date both are the same date.
-        """
-        if not dates_str or not dates_str.strip():
-            return None, None
-        parts = [p.strip() for p in dates_str.split(",")]
-        from_date = to_date = None
-        for fmt in ("%m/%d/%Y", "%m/%d/%y", "%m-%d-%Y", "%Y-%m-%d"):
-            try:
-                from_date = datetime.strptime(parts[0], fmt).date()
-                break
-            except (ValueError, IndexError):
-                pass
-        if len(parts) >= 2 and parts[1]:
-            for fmt in ("%m/%d/%Y", "%m/%d/%y", "%m-%d-%Y", "%Y-%m-%d"):
-                try:
-                    to_date = datetime.strptime(parts[1], fmt).date()
-                    break
-                except (ValueError, IndexError):
-                    pass
-        else:
-            to_date = from_date  # single date → exact match
-        return from_date, to_date
-
-    def _extract_date_from_filename(self, filename):
-        """Try to extract a date from a filename. Returns a date object or None.
-        Handles separators (-, _, /, .) and bare 8-digit strings (MMDDYYYY or YYYYMMDD).
-        """
-        from datetime import date as _date
-        name_no_ext = os.path.splitext(filename)[0]
-        # YYYY[-_./]MM[-_./]DD
-        m = re.search(r'(\d{4})[-_./\s](\d{1,2})[-_./\s](\d{1,2})', name_no_ext)
-        if m:
-            try:
-                return _date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
-            except ValueError:
-                pass
-        # MM[-_./]DD[-_./]YYYY
-        m = re.search(r'(\d{1,2})[-_./\s](\d{1,2})[-_./\s](\d{4})', name_no_ext)
-        if m:
-            try:
-                return _date(int(m.group(3)), int(m.group(1)), int(m.group(2)))
-            except ValueError:
-                pass
-        # 8 contiguous digits — try MMDDYYYY then YYYYMMDD
-        for m in re.finditer(r'(?<!\d)(\d{8})(?!\d)', name_no_ext):
-            s = m.group(1)
-            try:  # MMDDYYYY
-                return _date(int(s[4:]), int(s[:2]), int(s[2:4]))
-            except ValueError:
-                pass
-            try:  # YYYYMMDD
-                return _date(int(s[:4]), int(s[4:6]), int(s[6:]))
-            except ValueError:
-                pass
-        return None
 
     def get_keywords_for_type(self, auth_type):
         """Get search keywords based on auth type."""
@@ -5702,15 +5579,14 @@ PACE Authorization Team""")
             messagebox.showerror("Error", "Please select a destination folder")
             return
         
-        # Get criteria from table
+        # Get criteria from table (now includes last_dos)
         criteria = []
         for item in self.finder_table.get_children():
             values = self.finder_table.item(item, 'values')
             name = values[0]
             auth_type = values[1]
-            search_type = values[2] if len(values) > 2 else "Most Recent"
-            dates = values[3] if len(values) > 3 else ""
-            criteria.append((name, auth_type, search_type, dates))
+            last_dos = values[3] if len(values) > 3 else ""
+            criteria.append((name, auth_type, last_dos))
         
         if not criteria:
             messagebox.showerror("Error", "Please add at least one search criteria to the table")
@@ -5770,14 +5646,15 @@ PACE Authorization Team""")
             self.finder_log_msg(f"📄 Scanning {len(pdf_files)} PDFs...")
         
         # Group ALL original criteria by normalized name+auth_type (to track duplicates)
-        all_imports_by_key = {}
+        # This means "John Smith, Skilled" appearing 3 times with different Last DOS will all be tracked
+        all_imports_by_key = {}  # (name_normalized, auth_type) -> list of (name, auth_type, last_dos)
         original_criteria_count = len(criteria)
         
-        for name, auth_type, search_type, dates in criteria:
+        for name, auth_type, last_dos in criteria:
             key = (name.upper().strip(), auth_type.upper().strip())
             if key not in all_imports_by_key:
                 all_imports_by_key[key] = []
-            all_imports_by_key[key].append((name, auth_type, search_type, dates))
+            all_imports_by_key[key].append((name, auth_type, last_dos))
         
         # Count duplicate import entries
         duplicate_import_entries = []
@@ -5787,22 +5664,22 @@ PACE Authorization Team""")
                 duplicate_import_entries.extend(entries[1:])
         
         # Create deduplicated list for searching (one per unique name+type)
-        criteria_for_search = [(e[0], e[1], e[2], e[3]) for e in (entries[0] for entries in all_imports_by_key.values())]
+        criteria_for_search = [(entries[0][0], entries[0][1], entries[0][2]) for entries in all_imports_by_key.values()]
         
         if duplicate_import_entries:
-            self.finder_log_msg(f"ℹ️ Found {len(duplicate_import_entries)} duplicate name entries in import")
+            self.finder_log_msg(f"ℹ️ Found {len(duplicate_import_entries)} duplicate name entries in import (each will get its own Last DOS)")
         
         # Search and copy - only copy MOST RECENT matching file per criteria
         matched = 0
         copied_files = []
         
-        # Track results for reporting
-        found_matches = []  # (name, auth_type, filename, dates) - includes ALL duplicates
-        encrypted_matches = []  # (name, auth_type, encrypted_filename, fallback_filename, _)
-        name_found_type_mismatch = []  # (name, auth_type, found_type, dates)
-        not_found_at_all = []  # (name, auth_type, dates)
+        # Track results for reporting (now includes last_dos)
+        found_matches = []  # (name, auth_type, filename, last_dos) - includes ALL duplicates
+        encrypted_matches = []  # (name, auth_type, encrypted_filename, fallback_filename, last_dos)
+        name_found_type_mismatch = []  # (name, auth_type, found_type, last_dos)
+        not_found_at_all = []  # (name, auth_type, last_dos)
         
-        for name, auth_type, search_type, dates in criteria_for_search:
+        for name, auth_type, last_dos in criteria_for_search:
             keywords = self.get_keywords_for_type(auth_type)
             if not keywords:
                 self.finder_log_msg(f"⚠️ Unknown auth type: {auth_type} for {name}")
@@ -5878,41 +5755,6 @@ PACE Authorization Team""")
                             elif "unskilled" in filename_lower:
                                 name_only_matches.append((pdf, "Unskilled"))
             
-            # --- Date Range search (Escort) ---
-            if search_type == "Date Range" and not self.finder_force_most_recent.get():
-                escort_from, escort_to = self._parse_dates_field(dates)
-                range_matches = []
-                for pdf, mtime in matching_files:
-                    file_date = self._extract_date_from_filename(pdf.name)
-                    if file_date is None:
-                        continue
-                    if escort_from and file_date < escort_from:
-                        continue
-                    if escort_to and file_date > escort_to:
-                        continue
-                    range_matches.append(pdf)
-
-                key = (name.upper().strip(), auth_type.upper().strip())
-                all_imports_for_this_name = all_imports_by_key.get(key, [(name, auth_type, search_type, dates)])
-                if range_matches:
-                    for pdf in range_matches:
-                        for import_name, import_type, import_st, import_dates in all_imports_for_this_name:
-                            found_matches.append((import_name, import_type, pdf.name, import_dates))
-                        dest_file = dest_path / pdf.name
-                        if dest_file not in copied_files:
-                            try:
-                                shutil.copy2(pdf, dest_file)
-                                self._auto_unlock_pdf(str(dest_file))
-                                copied_files.append(dest_file)
-                                matched += 1
-                            except Exception as e:
-                                self.finder_log_msg(f"❌ Error copying {pdf.name}: {e}")
-                else:
-                    for import_name, import_type, import_st, import_dates in all_imports_for_this_name:
-                        not_found_at_all.append((import_name, import_type, import_dates))
-                continue  # skip Most Recent logic below
-
-            # --- Most Recent search (Skilled / Unskilled) ---
             # If we found full matches, copy only the most recent one
             if matching_files:
                 # Sort by modification time (newest first) and take the first one
@@ -5923,15 +5765,15 @@ PACE Authorization Team""")
                 is_encrypted = "encrypted" in most_recent_pdf.name.lower()
                 if is_encrypted:
                     # Track encrypted files (informational only - will still process them)
-                    encrypted_matches.append((name, auth_type, most_recent_pdf.name, None, ""))
+                    encrypted_matches.append((name, auth_type, most_recent_pdf.name, None, last_dos))
                 
-                # Get ALL import entries with this name+auth_type
+                # Get ALL import entries with this name+auth_type (includes duplicates with different Last DOS)
                 key = (name.upper().strip(), auth_type.upper().strip())
-                all_imports_for_this_name = all_imports_by_key.get(key, [(name, auth_type, search_type, dates)])
+                all_imports_for_this_name = all_imports_by_key.get(key, [(name, auth_type, last_dos)])
                 
-                # Add entry to found_matches for EACH import
-                for import_name, import_type, import_st, import_dates in all_imports_for_this_name:
-                    found_matches.append((import_name, import_type, most_recent_pdf.name, import_dates))
+                # Add entry to found_matches for EACH import (so duplicates get their own Last DOS)
+                for import_name, import_type, import_last_dos in all_imports_for_this_name:
+                    found_matches.append((import_name, import_type, most_recent_pdf.name, import_last_dos))
                 
                 # ALWAYS use the most recent file (password 92020 handles decryption during extraction)
                 dest_file = dest_path / most_recent_pdf.name
@@ -5949,23 +5791,23 @@ PACE Authorization Team""")
                 found_type = name_only_matches[0][1]  # Get the type that was found
                 # Add entry for ALL imports with this name
                 key = (name.upper().strip(), auth_type.upper().strip())
-                all_imports_for_this_name = all_imports_by_key.get(key, [(name, auth_type, search_type, dates)])
-                for import_name, import_type, import_st, import_dates in all_imports_for_this_name:
-                    name_found_type_mismatch.append((import_name, import_type, found_type, import_dates))
+                all_imports_for_this_name = all_imports_by_key.get(key, [(name, auth_type, last_dos)])
+                for import_name, import_type, import_last_dos in all_imports_for_this_name:
+                    name_found_type_mismatch.append((import_name, import_type, found_type, import_last_dos))
             else:
                 # Name not found at all
                 # Add entry for ALL imports with this name
                 key = (name.upper().strip(), auth_type.upper().strip())
-                all_imports_for_this_name = all_imports_by_key.get(key, [(name, auth_type, search_type, dates)])
-                for import_name, import_type, import_st, import_dates in all_imports_for_this_name:
-                    not_found_at_all.append((import_name, import_type, import_dates))
+                all_imports_for_this_name = all_imports_by_key.get(key, [(name, auth_type, last_dos)])
+                for import_name, import_type, import_last_dos in all_imports_for_this_name:
+                    not_found_at_all.append((import_name, import_type, import_last_dos))
         
         # Group found matches by filename to detect duplicates
-        file_to_criteria = {}  # filename -> list of (name, auth_type, dates)
-        for name, auth_type, filename, dates in found_matches:
+        file_to_criteria = {}  # filename -> list of (name, auth_type, last_dos)
+        for name, auth_type, filename, last_dos in found_matches:
             if filename not in file_to_criteria:
                 file_to_criteria[filename] = []
-            file_to_criteria[filename].append((name, auth_type, dates))
+            file_to_criteria[filename].append((name, auth_type, last_dos))
         
         # Separate into unique matches and duplicate matches (multiple criteria -> same file)
         unique_matches = []  # Files matched by exactly one criteria
@@ -5981,7 +5823,7 @@ PACE Authorization Team""")
         self.finder_log_msg(f"\n{'='*60}")
         self.finder_log_msg(f"✅ FOUND & COPIED - UNIQUE MATCHES ({len(unique_matches)} files)")
         self.finder_log_msg(f"{'='*60}")
-        for name, auth_type, filename, dates in unique_matches:
+        for name, auth_type, filename, last_dos in unique_matches:
             self.finder_log_msg(f"  ✓ {name} ({auth_type}) → {filename}")
         
         if duplicate_matches:
@@ -5991,7 +5833,7 @@ PACE Authorization Team""")
             for filename, criteria_list in duplicate_matches:
                 self.finder_log_msg(f"  🔄 FILE: {filename}")
                 self.finder_log_msg(f"     Matched to {len(criteria_list)} patients:")
-                for name, auth_type, dates in criteria_list:
+                for name, auth_type, last_dos in criteria_list:
                     self.finder_log_msg(f"       - {name} ({auth_type})")
                 self.finder_log_msg("")  # Blank line between entries
         
@@ -5999,7 +5841,7 @@ PACE Authorization Team""")
             self.finder_log_msg(f"\n{'='*60}")
             self.finder_log_msg(f"🔒 ENCRYPTED FILES ({len(encrypted_matches)})")
             self.finder_log_msg(f"{'='*60}")
-            for name, auth_type, encrypted_file, fallback_file, _ in encrypted_matches:
+            for name, auth_type, encrypted_file, fallback_file, last_dos in encrypted_matches:
                 self.finder_log_msg(f"  🔒 {name} ({auth_type})")
                 self.finder_log_msg(f"     File: {encrypted_file} (password will be used for extraction)")
         
@@ -6007,14 +5849,14 @@ PACE Authorization Team""")
             self.finder_log_msg(f"\n{'='*60}")
             self.finder_log_msg(f"⚠️ NAME FOUND BUT TYPE MISMATCH ({len(name_found_type_mismatch)})")
             self.finder_log_msg(f"{'='*60}")
-            for name, wanted_type, found_type, _ in name_found_type_mismatch:
+            for name, wanted_type, found_type, last_dos in name_found_type_mismatch:
                 self.finder_log_msg(f"  ⚠️ {name} - wanted {wanted_type}, found {found_type}")
         
         if not_found_at_all:
             self.finder_log_msg(f"\n{'='*60}")
             self.finder_log_msg(f"❌ NOT FOUND AT ALL ({len(not_found_at_all)})")
             self.finder_log_msg(f"{'='*60}")
-            for name, auth_type, _ in not_found_at_all:
+            for name, auth_type, last_dos in not_found_at_all:
                 self.finder_log_msg(f"  ❌ {name} ({auth_type})")
         
         # Calculate how many criteria entries matched vs didn't
@@ -6037,22 +5879,23 @@ PACE Authorization Team""")
         self.finder_log_msg(f"  ---")
         self.finder_log_msg(f"  📁 UNIQUE FILES COPIED: {matched}")
         
-        # Store results
-        self.finder_found_matches = found_matches  # (name, auth_type, filename, dates)
-        self.finder_duplicate_imports = duplicate_import_entries
-        self.finder_original_count = original_criteria_count
+        # Store results for Excel export (now includes last_dos)
+        self.finder_found_matches = found_matches  # (name, auth_type, filename, last_dos) - includes ALL duplicates
+        self.finder_duplicate_imports = duplicate_import_entries  # Track duplicates from import
+        self.finder_original_count = original_criteria_count  # Track original count
         self.finder_not_found = []
         
         # Update Extract tab file count
         if hasattr(self, 'finder_files_count_var'):
             self.update_finder_files_count()
         
-        # Add type mismatches to not found
-        for name, wanted_type, found_type, dates in name_found_type_mismatch:
-            self.finder_not_found.append((name, wanted_type, f"Type mismatch - wanted {wanted_type}, found {found_type}", dates))
-        # Add not found at all
-        for name, auth_type, dates in not_found_at_all:
-            self.finder_not_found.append((name, auth_type, "Not found in source folder", dates))
+        # Add type mismatches to not found (with reason and last_dos)
+        for name, wanted_type, found_type, last_dos in name_found_type_mismatch:
+            self.finder_not_found.append((name, wanted_type, f"Type mismatch - wanted {wanted_type}, found {found_type}", last_dos))
+        # Note: Encrypted files are now processed normally (password handles decryption)
+        # Add not found at all (with reason and last_dos)
+        for name, auth_type, last_dos in not_found_at_all:
+            self.finder_not_found.append((name, auth_type, "Not found in source folder", last_dos))
         
         # Populate the results view (this auto-switches to results view)
         self.populate_finder_results()
@@ -6180,31 +6023,32 @@ PACE Authorization Team""")
         from openpyxl.styles import PatternFill
         
         # Build lookup from filename to ALL import entries (including duplicates)
-        # This maps filename -> list of (name, auth_type, dates) for ALL matching import entries
-        filename_to_imports = {}  # filename -> list of (name, auth_type, dates)
-        for name, auth_type, filename, dates in self.finder_found_matches:
+        # This maps filename -> list of (name, auth_type, last_dos) for ALL matching import entries
+        filename_to_imports = {}  # filename -> list of (name, auth_type, last_dos)
+        for name, auth_type, filename, last_dos in self.finder_found_matches:
             if filename not in filename_to_imports:
                 filename_to_imports[filename] = []
-            filename_to_imports[filename].append((name, auth_type, dates))
+            filename_to_imports[filename].append((name, auth_type, last_dos))
             # Also add lowercase version
             if filename.lower() not in filename_to_imports:
                 filename_to_imports[filename.lower()] = []
-            if (name, auth_type, dates) not in filename_to_imports[filename.lower()]:
-                filename_to_imports[filename.lower()].append((name, auth_type, dates))
+            if (name, auth_type, last_dos) not in filename_to_imports[filename.lower()]:
+                filename_to_imports[filename.lower()].append((name, auth_type, last_dos))
         
-        # Build name -> list of (auth_type, dates) for ALL import entries from the table
-        name_to_all_imports = {}  # normalized_name -> list of (auth_type, dates)
+        # Build name -> list of (auth_type, last_dos) for ALL import entries from the table
+        # This captures duplicates that were in the original import
+        name_to_all_imports = {}  # normalized_name -> list of (auth_type, last_dos)
         if hasattr(self, 'finder_table'):
             for item in self.finder_table.get_children():
                 values = self.finder_table.item(item, "values")
                 if len(values) >= 4:
-                    name, auth_type, search_type, dates = values[0], values[1], values[2], values[3]
+                    name, auth_type, searches_for, last_dos = values[0], values[1], values[2], values[3]
                     if name:
                         normalized = name.upper().strip()
                         normalized = re.sub(r'\s+', ' ', normalized)
                         if normalized not in name_to_all_imports:
                             name_to_all_imports[normalized] = []
-                        name_to_all_imports[normalized].append((auth_type, dates))
+                        name_to_all_imports[normalized].append((auth_type, last_dos))
         
         # === EXTRACTION DATA ===
         # Raw Data
@@ -6247,15 +6091,15 @@ PACE Authorization Team""")
                     
                     # Try exact match
                     if normalized in name_to_all_imports:
-                        import_entries = [(auth_type, dates) for auth_type, dates in name_to_all_imports[normalized]]
-                        import_entries = [(normalized, auth_type, dates) for auth_type, dates in name_to_all_imports[normalized]]
+                        import_entries = [(auth_type, last_dos) for auth_type, last_dos in name_to_all_imports[normalized]]
+                        import_entries = [(normalized, auth_type, last_dos) for auth_type, last_dos in name_to_all_imports[normalized]]
                     
                     # Try LAST, FIRST format
                     if not import_entries and "," in normalized:
                         parts = normalized.split(",", 1)
                         last_first = f"{parts[0].strip()}, {parts[1].strip()}"
                         if last_first in name_to_all_imports:
-                            import_entries = [(last_first, auth_type, dates) for auth_type, dates in name_to_all_imports[last_first]]
+                            import_entries = [(last_first, auth_type, last_dos) for auth_type, last_dos in name_to_all_imports[last_first]]
                     
                     # Try reverse: FIRST LAST -> LAST, FIRST
                     if not import_entries and "," not in normalized:
@@ -6263,7 +6107,7 @@ PACE Authorization Team""")
                         if len(parts) >= 2:
                             last_first = f"{parts[-1]}, {parts[0]}"
                             if last_first in name_to_all_imports:
-                                import_entries = [(last_first, auth_type, dates) for auth_type, dates in name_to_all_imports[last_first]]
+                                import_entries = [(last_first, auth_type, last_dos) for auth_type, last_dos in name_to_all_imports[last_first]]
                     
                     # Try partial match by last name
                     if not import_entries:
@@ -6275,23 +6119,23 @@ PACE Authorization Team""")
                         if last_name:
                             for db_name, imports_list in name_to_all_imports.items():
                                 if last_name in db_name:
-                                    import_entries = [(db_name, auth_type, dates) for auth_type, dates in imports_list]
+                                    import_entries = [(db_name, auth_type, last_dos) for auth_type, last_dos in imports_list]
                                     break
                 
                 # Create one row for EACH import entry (handles duplicates with different Last DOS)
                 if import_entries:
                     for import_entry in import_entries:
                         if len(import_entry) == 3:
-                            _, auth_type, dates = import_entry
+                            _, auth_type, last_dos = import_entry
                         else:
-                            auth_type, dates = import_entry[0], import_entry[1] if len(import_entry) > 1 else ""
+                            auth_type, last_dos = import_entry[0], import_entry[1] if len(import_entry) > 1 else ""
                         
                         new_row = row_data.copy()
-                        new_row["Dates"] = dates
+                        new_row["Last DOS"] = last_dos
                         expanded_formatted_data.append(new_row)
                 else:
-                    # No import match - add row without Dates
-                    row_data["Dates"] = ""
+                    # No import match - add row without Last DOS
+                    row_data["Last DOS"] = ""
                     expanded_formatted_data.append(row_data)
             else:
                 row_data["Last DOS"] = ""
@@ -6308,25 +6152,25 @@ PACE Authorization Team""")
                 if col in df_formatted.columns:
                     df_formatted[col] = pd.to_datetime(df_formatted[col], errors="coerce")
             
-            # Parse Dates column
-            if "Dates" in df_formatted.columns:
-                df_formatted["Dates"] = pd.to_datetime(
-                    df_formatted["Dates"].str.split(",").str[0].str.strip(),
-                    format="%m/%d/%Y", errors="coerce")
+            # Parse Last DOS with explicit format (MM/DD/YYYY from bulk import)
+            if "Last DOS" in df_formatted.columns:
+                df_formatted["Last DOS"] = pd.to_datetime(df_formatted["Last DOS"], format="%m/%d/%Y", errors="coerce")
             
-            # Highlight rows where Dates > Date Auth Expired
+            # Now determine which rows to highlight by comparing the ACTUAL DataFrame values
             for idx, row in df_formatted.iterrows():
-                dates_val = row.get("Dates")
+                last_dos_val = row.get("Last DOS")
                 expire_val = row.get("Date Auth Expired")
-                if pd.notna(dates_val) and pd.notna(expire_val):
-                    if dates_val > expire_val:
+                
+                # Only highlight if BOTH dates are valid AND Last DOS > Expire Date
+                if pd.notna(last_dos_val) and pd.notna(expire_val):
+                    if last_dos_val > expire_val:
                         rows_to_highlight.append(idx)
             
-            # Column order
+            # Column order with Last DOS added after Date Auth Expired
             formatted_columns = [
                 "Last Name", "First Name", "Patient Name", "Extracted Name", "Patient ID",
                 "CPT Code", "CPT Code 2", "CPT Code 3", "CPT Code 4", "CPT Code 5",
-                "Auth Number", "Date Approved", "Date Auth Expired", "Dates",
+                "Auth Number", "Date Approved", "Date Auth Expired", "Last DOS",
                 "Clearing House Payer ID", "Location ID", "Unique Payer Identifier"
             ]
             df_formatted = df_formatted[[c for c in formatted_columns if c in df_formatted.columns]]
@@ -6341,19 +6185,19 @@ PACE Authorization Team""")
         # === FILE FINDER DATA ===
         # Found Auths
         found_data = []
-        for name, auth_type, filename, dates in self.finder_found_matches:
+        for name, auth_type, filename, last_dos in self.finder_found_matches:
             found_data.append({
-                "Patient Name": name, "Auth Type": auth_type, "File Found": filename, "Dates": dates
+                "Patient Name": name, "Auth Type": auth_type, "File Found": filename, "Last DOS": last_dos
             })
-        df_found = pd.DataFrame(found_data) if found_data else pd.DataFrame(columns=["Patient Name", "Auth Type", "File Found", "Dates"])
+        df_found = pd.DataFrame(found_data) if found_data else pd.DataFrame(columns=["Patient Name", "Auth Type", "File Found", "Last DOS"])
         
         # Not Found Auths
         not_found_data = []
-        for name, auth_type, reason, dates in self.finder_not_found:
+        for name, auth_type, reason, last_dos in self.finder_not_found:
             not_found_data.append({
-                "Patient Name": name, "Auth Type": auth_type, "Reason": reason, "Dates": dates
+                "Patient Name": name, "Auth Type": auth_type, "Reason": reason, "Last DOS": last_dos
             })
-        df_not_found = pd.DataFrame(not_found_data) if not_found_data else pd.DataFrame(columns=["Patient Name", "Auth Type", "Reason", "Dates"])
+        df_not_found = pd.DataFrame(not_found_data) if not_found_data else pd.DataFrame(columns=["Patient Name", "Auth Type", "Reason", "Last DOS"])
         
         # === IMPORT SUMMARY (combine file finder + extraction data) ===
         # Build a lookup of extracted data by filename
@@ -6369,28 +6213,28 @@ PACE Authorization Team""")
                 }
         
         summary_data = []
-        for name, auth_type, filename, dates in self.finder_found_matches:
+        for name, auth_type, filename, last_dos in self.finder_found_matches:
             extracted = extraction_lookup.get(filename, {})
             summary_data.append({
                 "Patient Name": name,
                 "Auth Type": auth_type,
                 "Date Approved": extracted.get("Date Approved", ""),
                 "Date Expired": extracted.get("Date Expired", ""),
-                "Dates": dates,
+                "Last DOS": last_dos,
                 "Auth Number": extracted.get("Auth Number", ""),
                 "Patient ID": extracted.get("Patient ID", ""),
                 "File": filename
             })
         df_summary = pd.DataFrame(summary_data) if summary_data else pd.DataFrame(
-            columns=["Patient Name", "Auth Type", "Date Approved", "Date Expired", "Dates", "Auth Number", "Patient ID", "File"])
+            columns=["Patient Name", "Auth Type", "Date Approved", "Date Expired", "Last DOS", "Auth Number", "Patient ID", "File"])
         
         # Parse dates in summary
         for col in ["Date Approved", "Date Expired"]:
             if col in df_summary.columns:
                 df_summary[col] = pd.to_datetime(df_summary[col], errors="coerce")
         # Parse Last DOS with explicit MM/DD/YYYY format
-        if "Dates" in df_summary.columns:
-            df_summary["Dates"] = pd.to_datetime(df_summary["Dates"], format="%m/%d/%Y", errors="coerce")
+        if "Last DOS" in df_summary.columns:
+            df_summary["Last DOS"] = pd.to_datetime(df_summary["Last DOS"], format="%m/%d/%Y", errors="coerce")
         
         # Helper function for column width adjustment
         def adjust_column_widths(worksheet):
@@ -6468,7 +6312,7 @@ PACE Authorization Team""")
             unique_names_searched = total_names_imported - duplicate_names_in_import
             
             # Unique files returned (each file only counted once)
-            unique_files = len(set(filename for name, auth_type, filename, dates in self.finder_found_matches))
+            unique_files = len(set(filename for name, auth_type, filename, last_dos in self.finder_found_matches))
             
             # Count expired auths (Last DOS > Date Expired) - from formatted sheet
             expired_count = len(rows_to_highlight) if rows_to_highlight else 0
@@ -6537,40 +6381,41 @@ PACE Authorization Team""")
         
         try:
             # Create DataFrames for each sheet
-            # Found Auths sheet
+            # Found Auths sheet (includes last_dos now)
             found_data = []
-            for name, auth_type, filename, dates in self.finder_found_matches:
+            for name, auth_type, filename, last_dos in self.finder_found_matches:
                 found_data.append({
                     "Patient Name": name,
                     "Auth Type": auth_type,
                     "File Found": filename,
-                    "Dates": dates
+                    "Last DOS": last_dos
                 })
-            df_found = pd.DataFrame(found_data) if found_data else pd.DataFrame(columns=["Patient Name", "Auth Type", "File Found", "Dates"])
+            df_found = pd.DataFrame(found_data) if found_data else pd.DataFrame(columns=["Patient Name", "Auth Type", "File Found", "Last DOS"])
             
-            # Not Found Auths sheet (includes dates now)
+            # Not Found Auths sheet (includes last_dos now)
             not_found_data = []
-            for name, auth_type, reason, dates in self.finder_not_found:
+            for name, auth_type, reason, last_dos in self.finder_not_found:
                 not_found_data.append({
                     "Patient Name": name,
                     "Auth Type": auth_type,
                     "Reason": reason,
-                    "Dates": dates
+                    "Last DOS": last_dos
                 })
-            df_not_found = pd.DataFrame(not_found_data) if not_found_data else pd.DataFrame(columns=["Patient Name", "Auth Type", "Reason", "Dates"])
+            df_not_found = pd.DataFrame(not_found_data) if not_found_data else pd.DataFrame(columns=["Patient Name", "Auth Type", "Reason", "Last DOS"])
             
-            # Import Summary sheet
+            # Import Summary sheet - Patient Name, Date Approved, Date Expired, Last DOS
+            # Date Approved and Date Expired are left blank to be filled in after extraction
             summary_data = []
-            for name, auth_type, filename, dates in self.finder_found_matches:
+            for name, auth_type, filename, last_dos in self.finder_found_matches:
                 summary_data.append({
                     "Patient Name": name,
                     "Auth Type": auth_type,
                     "Date Approved": "",  # To be filled after extraction
                     "Date Expired": "",   # To be filled after extraction
-                    "Dates": dates,
+                    "Last DOS": last_dos,
                     "File": filename
                 })
-            df_summary = pd.DataFrame(summary_data) if summary_data else pd.DataFrame(columns=["Patient Name", "Auth Type", "Date Approved", "Date Expired", "Dates", "File"])
+            df_summary = pd.DataFrame(summary_data) if summary_data else pd.DataFrame(columns=["Patient Name", "Auth Type", "Date Approved", "Date Expired", "Last DOS", "File"])
             
             # Write to Excel
             with pd.ExcelWriter(output_file, engine="openpyxl") as writer:
@@ -6807,6 +6652,7 @@ PACE Authorization Team""")
             self.dropbox_service.connect()
 
             self.dropbox_status_var.set("✅ connected")
+            self.dropbox_connect_btn.configure(text="✅ Connected")
             self.log("   ✅ Dropbox connected!")
 
             # Auto-fill the folder if DROPBOX_ROOT_FOLDER is set
