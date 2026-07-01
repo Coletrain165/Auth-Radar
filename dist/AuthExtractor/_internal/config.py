@@ -18,7 +18,19 @@ except ImportError:
 
 
 def get_app_dir():
-    """Get the application directory - works for both script and frozen exe."""
+    """Get the bundled resources directory (where data files and assets live).
+    In a frozen exe this is sys._MEIPASS (_internal/); in dev it's the source root.
+    """
+    if getattr(sys, 'frozen', False):
+        return pathlib.Path(sys._MEIPASS)
+    else:
+        return pathlib.Path(__file__).parent
+
+
+def get_exe_dir():
+    """Get the directory containing the exe (for user-facing output files).
+    In a frozen exe this is next to AuthExtractor.exe; in dev it's the source root.
+    """
     if getattr(sys, 'frozen', False):
         return pathlib.Path(sys.executable).parent
     else:
@@ -26,6 +38,7 @@ def get_app_dir():
 
 
 APP_DIR = get_app_dir()
+EXE_DIR = get_exe_dir()
 
 # ---------------------------------------------------------------------------
 # Caspio API

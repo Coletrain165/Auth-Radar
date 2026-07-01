@@ -22,7 +22,7 @@ from config import (
     DROPBOX_REFRESH_TOKEN,
     DROPBOX_ROOT_FOLDER,
     PDF_PASSWORD,
-    APP_DIR,
+    EXE_DIR,
 )
 from integrations.dropbox_service import DropboxService
 from services.pdf_unlock_service import PdfUnlockService
@@ -116,7 +116,7 @@ class AuthDownloaderApp:
         bottom_frame.pack(fill=tk.X)
 
         ttk.Label(bottom_frame, text="Save to:").pack(side=tk.LEFT)
-        self.output_var = tk.StringVar(value=str(APP_DIR / "Downloaded Auths"))
+        self.output_var = tk.StringVar(value=str(EXE_DIR / "Downloaded Auths"))
         ttk.Entry(bottom_frame, textvariable=self.output_var, width=40).pack(side=tk.LEFT, padx=5)
         ttk.Button(bottom_frame, text="Browse...", command=self._browse_output).pack(side=tk.LEFT, padx=(0, 15))
 
