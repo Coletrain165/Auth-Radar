@@ -7588,18 +7588,15 @@ PACE Authorization Team""")
 def check_dependencies():
     """Check if required dependencies are installed."""
     missing = []
-    
-    if not pdfplumber and not PyPDF2:
-        missing.append("pdfplumber")
+
     if not pd:
         missing.append("pandas openpyxl")
-    
+
     return missing
 
 
 def main():
     """Main entry point."""
-    # Check dependencies
     missing = check_dependencies()
     if missing:
         root = tk.Tk()

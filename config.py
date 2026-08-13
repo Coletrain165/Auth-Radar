@@ -9,10 +9,11 @@ import os
 import sys
 import pathlib
 
-# Load .env file if python-dotenv is available
+# Load .env from next to the exe (frozen) or source root (dev)
 try:
     from dotenv import load_dotenv
-    load_dotenv()
+    _env_path = pathlib.Path(sys.executable).parent / ".env" if getattr(sys, 'frozen', False) else pathlib.Path(__file__).parent / ".env"
+    load_dotenv(_env_path)
 except ImportError:
     pass
 

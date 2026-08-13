@@ -1,1 +1,0 @@
-# Auth Radar - Database package
