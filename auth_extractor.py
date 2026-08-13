@@ -4293,57 +4293,28 @@ class AuthExtractorApp:
                 key = (name.upper().strip(), auth_type.upper().strip())
                 all_for_name = all_imports_by_key.get(key, [(name, auth_type, search_type, dates)])
 
-                # --- Date Range search (Escort) ---
-                if search_type == "Date Range" and not self.finder_force_most_recent.get():
-                    escort_from, escort_to = self._parse_dates_field(dates)
-                    range_matches = []
-                    for meta, mod in matching_files:
-                        file_date = self._extract_date_from_filename(meta.name)
-                        if file_date is None:
-                            continue
-                        if escort_from and file_date < escort_from:
-                            continue
-                        if escort_to and file_date > escort_to:
-                            continue
-                        range_matches.append(meta)
-                    if range_matches:
-                        for meta in range_matches:
-                            dest_file = dest_path / meta.name
-                            if not dest_file.exists():
-                                try:
-                                    self.finder_log_msg(f"   ⬇️  {meta.name}")
-                                    self.dropbox_service.download_file(meta, str(dest_path))
-                                    self._auto_unlock_pdf(str(dest_file))
-                                    matched += 1
-                                except Exception as e:
-                                    self.finder_log_msg(f"   ❌ Download failed {meta.name}: {e}")
-                                    continue
-                            for n, t, st, d in all_for_name:
-                                found_matches.append((n, t, meta.name, d))
-                    else:
-                        for n, t, st, d in all_for_name:
-                            not_found_at_all.append((n, t, d))
-                    continue
-
-                # --- Most Recent search (Skilled / Unskilled) ---
+                # --- Most Recent search (Escort: 3 most recent / Skilled / Unskilled: 1 most recent) ---
                 if matching_files:
                     matching_files.sort(key=lambda x: x[1] if x[1] else datetime.min, reverse=True)
-                    best = matching_files[0][0]
-                    dest_file = dest_path / best.name
-                    if not dest_file.exists():
-                        try:
-                            self.finder_log_msg(f"   ⬇️  {best.name}")
-                            self.dropbox_service.download_file(best, str(dest_path))
-                            # Auto-unlock encrypted PDFs in place
-                            self._auto_unlock_pdf(str(dest_file))
-                            matched += 1
-                        except Exception as e:
-                            self.finder_log_msg(f"   ❌ Download failed {best.name}: {e}")
-                            for n, t, st, d in all_for_name:
-                                not_found_at_all.append((n, t, d))
-                            continue
-                    for n, t, st, d in all_for_name:
-                        found_matches.append((n, t, best.name, d))
+                    if auth_type.lower() == "escort":
+                        non_encrypted = [(m, mod) for m, mod in matching_files if "encrypted" not in m.name.lower()]
+                        top_files = non_encrypted[:3] if non_encrypted else matching_files[:3]
+                    else:
+                        top_files = matching_files[:1]
+                    for best, _ in top_files:
+                        dest_file = dest_path / best.name
+                        if not dest_file.exists():
+                            try:
+                                self.finder_log_msg(f"   ⬇️  {best.name}")
+                                self.dropbox_service.download_file(best, str(dest_path))
+                                # Auto-unlock encrypted PDFs in place
+                                self._auto_unlock_pdf(str(dest_file))
+                                matched += 1
+                            except Exception as e:
+                                self.finder_log_msg(f"   ❌ Download failed {best.name}: {e}")
+                                continue
+                        for n, t, st, d in all_for_name:
+                            found_matches.append((n, t, best.name, d))
                 elif name_only_matches:
                     found_type = name_only_matches[0][1]
                     for n, t, st, d in all_for_name:
@@ -5267,7 +5238,7 @@ PACE Authorization Team""")
         keywords = self.get_keywords_for_type(auth_type)
         searches_for = ", ".join(keywords).title() if keywords else "Unknown"
         
-        search_type = "Date Range" if auth_type.lower() == "escort" else "Most Recent"
+        search_type = "Most Recent"
         # Add to table
         self.finder_table.insert("", tk.END, text="☐", values=(name, auth_type, search_type, ""))
         
@@ -5317,7 +5288,7 @@ PACE Authorization Team""")
         ttk.Label(frame, text="Dates:").grid(row=2, column=0, sticky=tk.W, pady=6)
         dates_var = tk.StringVar()
         ttk.Entry(frame, textvariable=dates_var, width=30).grid(row=2, column=1, sticky=tk.W, padx=(10, 0), pady=6)
-        ttk.Label(frame, text="1 date or 2 comma-separated dates (MM/DD/YYYY — Escort only)",
+        ttk.Label(frame, text="Dates field not used for Escort (pulls 3 most recent)",
                   foreground="#888888").grid(row=3, column=0, columnspan=2, sticky=tk.W, padx=(10, 0))
 
         def do_add():
@@ -5326,7 +5297,7 @@ PACE Authorization Team""")
                 messagebox.showwarning("Warning", "Patient name is required", parent=popup)
                 return
             auth_type = type_var.get().strip()
-            search_type = "Date Range" if auth_type.lower() == "escort" else "Most Recent"
+            search_type = "Most Recent"
             dates_val = dates_var.get().strip()
             self.finder_table.insert("", tk.END, text="\u2610", values=(name, auth_type, search_type, dates_val))
             popup.destroy()
@@ -5437,7 +5408,7 @@ PACE Authorization Team""")
         dates_col_scroll.pack(side=tk.RIGHT, fill=tk.Y)
 
         dates_col_hint = ttk.Label(dates_frame_outer,
-            text="1 date or 2 comma-separated dates\n(MM/DD/YYYY — used for Escort matching)",
+            text="Dates not used for Escort\n(Escort pulls the 3 most recent auths)",
             font=("Segoe UI", 8), foreground="gray")
         dates_col_hint.pack(anchor=tk.W, pady=(5, 0))
         
@@ -5514,7 +5485,7 @@ PACE Authorization Team""")
                     errors.append(f"Row {i+1}: '{name[:30]}' - unknown type '{auth_type}'")
                     continue
                 
-                search_type = "Date Range" if auth_type == "Escort" else "Most Recent"
+                search_type = "Most Recent"
                 dates_val = dates_rows[i].strip() if i < len(dates_rows) else ""
                 self.finder_table.insert("", tk.END, text="\u2610", values=(name, auth_type, search_type, dates_val))
                 added += 1
@@ -5878,72 +5849,41 @@ PACE Authorization Team""")
                             elif "unskilled" in filename_lower:
                                 name_only_matches.append((pdf, "Unskilled"))
             
-            # --- Date Range search (Escort) ---
-            if search_type == "Date Range" and not self.finder_force_most_recent.get():
-                escort_from, escort_to = self._parse_dates_field(dates)
-                range_matches = []
-                for pdf, mtime in matching_files:
-                    file_date = self._extract_date_from_filename(pdf.name)
-                    if file_date is None:
-                        continue
-                    if escort_from and file_date < escort_from:
-                        continue
-                    if escort_to and file_date > escort_to:
-                        continue
-                    range_matches.append(pdf)
-
-                key = (name.upper().strip(), auth_type.upper().strip())
-                all_imports_for_this_name = all_imports_by_key.get(key, [(name, auth_type, search_type, dates)])
-                if range_matches:
-                    for pdf in range_matches:
-                        for import_name, import_type, import_st, import_dates in all_imports_for_this_name:
-                            found_matches.append((import_name, import_type, pdf.name, import_dates))
-                        dest_file = dest_path / pdf.name
-                        if dest_file not in copied_files:
-                            try:
-                                shutil.copy2(pdf, dest_file)
-                                self._auto_unlock_pdf(str(dest_file))
-                                copied_files.append(dest_file)
-                                matched += 1
-                            except Exception as e:
-                                self.finder_log_msg(f"❌ Error copying {pdf.name}: {e}")
-                else:
-                    for import_name, import_type, import_st, import_dates in all_imports_for_this_name:
-                        not_found_at_all.append((import_name, import_type, import_dates))
-                continue  # skip Most Recent logic below
-
-            # --- Most Recent search (Skilled / Unskilled) ---
-            # If we found full matches, copy only the most recent one
+            # --- Most Recent search (Escort: 3 most recent / Skilled / Unskilled: 1 most recent) ---
+            # If we found full matches, copy the most recent ones
             if matching_files:
-                # Sort by modification time (newest first) and take the first one
+                # Sort by modification time (newest first)
                 matching_files.sort(key=lambda x: x[1], reverse=True)
-                most_recent_pdf, most_recent_time = matching_files[0]
-                
-                # Track if file is encrypted (for informational purposes)
-                is_encrypted = "encrypted" in most_recent_pdf.name.lower()
-                if is_encrypted:
-                    # Track encrypted files (informational only - will still process them)
-                    encrypted_matches.append((name, auth_type, most_recent_pdf.name, None, ""))
-                
+                if auth_type.lower() == "escort":
+                    non_encrypted = [(p, t) for p, t in matching_files if "encrypted" not in p.name.lower()]
+                    top_files = non_encrypted[:3] if non_encrypted else matching_files[:3]
+                else:
+                    top_files = matching_files[:1]
+
                 # Get ALL import entries with this name+auth_type
                 key = (name.upper().strip(), auth_type.upper().strip())
                 all_imports_for_this_name = all_imports_by_key.get(key, [(name, auth_type, search_type, dates)])
-                
-                # Add entry to found_matches for EACH import
-                for import_name, import_type, import_st, import_dates in all_imports_for_this_name:
-                    found_matches.append((import_name, import_type, most_recent_pdf.name, import_dates))
-                
-                # ALWAYS use the most recent file (password 92020 handles decryption during extraction)
-                dest_file = dest_path / most_recent_pdf.name
-                if dest_file not in copied_files:
-                    try:
-                        shutil.copy2(most_recent_pdf, dest_file)
-                        # Auto-unlock encrypted PDFs in place
-                        self._auto_unlock_pdf(str(dest_file))
-                        copied_files.append(dest_file)
-                        matched += 1
-                    except Exception as e:
-                        self.finder_log_msg(f"❌ Error copying {most_recent_pdf.name}: {e}")
+
+                for top_pdf, _ in top_files:
+                    # Track if file is encrypted (for informational purposes)
+                    is_encrypted = "encrypted" in top_pdf.name.lower()
+                    if is_encrypted:
+                        encrypted_matches.append((name, auth_type, top_pdf.name, None, ""))
+
+                    # Add entry to found_matches for EACH import
+                    for import_name, import_type, import_st, import_dates in all_imports_for_this_name:
+                        found_matches.append((import_name, import_type, top_pdf.name, import_dates))
+
+                    dest_file = dest_path / top_pdf.name
+                    if dest_file not in copied_files:
+                        try:
+                            shutil.copy2(top_pdf, dest_file)
+                            # Auto-unlock encrypted PDFs in place
+                            self._auto_unlock_pdf(str(dest_file))
+                            copied_files.append(dest_file)
+                            matched += 1
+                        except Exception as e:
+                            self.finder_log_msg(f"❌ Error copying {top_pdf.name}: {e}")
             elif name_only_matches:
                 # Name was found but type didn't match
                 found_type = name_only_matches[0][1]  # Get the type that was found
